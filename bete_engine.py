@@ -454,11 +454,9 @@ def split_chains(chains: Sequence[Chain], distance: np.ndarray) -> List[Piece]:
             if is_curve:
                 piece.state = "respins"
                 piece.reason = "curbură locală mare / arc / întoarcere; separat prin analiza tangentei"
-            elif len(np.unique(np.rint(part_points).astype(np.int32), axis=0)) < 4:
-                piece.state = "ambiguu"
-                piece.reason = "fragment liniar foarte scurt; păstrat pentru verificare, nu eliminat după grosime"
             else:
-                piece.reason = "segment liniar candidat; fără prag lungime/grosime"
+                piece.state = "certificat"
+                piece.reason = "băț liniar extras; fără prag de lungime/grosime și fără excludere la joncțiuni"
             pieces.append(piece)
             next_piece_id += 1
     return pieces
@@ -566,111 +564,58 @@ def _piece_outward_direction(piece: Piece, node_id: int) -> Optional[np.ndarray]
     return vector / norm if norm > 1e-6 else None
 
 
-def classify_junctions(pieces: List[Piece], node_arm_counts: Dict[int, int]) -> List[Tuple[int, str, int, str, int]]:
-    """Apply the trunk/branch and crossing rules to incident geometric arms."""
-    by_node: Dict[int, List[Tuple[Piece, np.ndarray]]] = {}
-    links: List[Tuple[int, str, int, str, int]] = []
+def link_collinear_continuations(
+    pieces: List[Piece],
+) -> List[Tuple[int, str, int, str, int]]:
+    """Pair only geometrically opposite arms at each node.
+
+    No glyph labels or T/F/X/L winner rules are used. At a junction, a pair of
+    nearly opposite directions is joined into one continuous stick; every
+    unpaired straight arm remains its own stick. Thus F yields its stem plus
+    both bars, while an X yields two crossing sticks instead of a red winner.
+    """
+    by_node: Dict[int, List[Tuple[Piece, np.ndarray, str]]] = {}
     for piece in pieces:
-        if piece.kind != "line":
+        if piece.kind != "line" or len(piece.points) < 2:
             continue
-        for node_id in (piece.start_node, piece.end_node):
+        for node_id, side in ((piece.start_node, "start"), (piece.end_node, "end")):
             if node_id is None:
                 continue
             direction = _piece_outward_direction(piece, node_id)
             if direction is not None:
-                by_node.setdefault(node_id, []).append((piece, direction))
+                by_node.setdefault(node_id, []).append((piece, direction, side))
 
+    links: List[Tuple[int, str, int, str, int]] = []
     for node_id, arms in by_node.items():
-        # De-duplicate a very short path which may touch the same node at both ends.
-        unique: Dict[int, np.ndarray] = {p.piece_id: d for p, d in arms}
-        arms = [(next(p for p, _ in arms if p.piece_id == pid), direction)
-                for pid, direction in unique.items()]
-        degree = len(arms)
-        if degree == 2:
-            dot = float(np.dot(arms[0][1], arms[1][1]))
-            if dot <= -0.70:
-                # A smooth through-route, often a rasterization artefact on a
-                # gently bowed handwritten line: join both halves, do not call it X.
-                for piece, _ in arms:
-                    piece.state = "certificat"
-                    piece.reason = "traseu continuu cu tangente aproape opuse; nod digital comprimat"
-                pa, pb = arms[0][0], arms[1][0]
-                side_a = "start" if pa.start_node == node_id else "end"
-                side_b = "start" if pb.start_node == node_id else "end"
-                links.append((pa.piece_id, side_a, pb.piece_id, side_b, node_id))
-            else:
-                angle = _angle_degrees(arms[0][1], arms[1][1])
-                if 55.0 <= angle <= 125.0:
-                    # A right-angle contact is not a reason to delete either
-                    # geometric stroke. This is essential for Pi-like shapes:
-                    # the top bar meets each side leg at a separate L corner.
-                    for piece, _ in arms:
-                        piece.state = "certificat"
-                        piece.reason = "colț L: ambele brațe geometrice sunt păstrate ca bețe independente"
-            continue
-        if degree < 2:
-            continue
-
         pairs: List[Tuple[float, int, int]] = []
-        for i in range(degree):
-            for j in range(i + 1, degree):
-                dot = float(np.dot(arms[i][1], arms[j][1]))
-                pairs.append((dot, i, j))
-        pairs.sort(key=lambda item: item[0])  # most nearly opposite first
+        for i in range(len(arms)):
+            for j in range(i + 1, len(arms)):
+                pi, di, _si = arms[i]
+                pj, dj, _sj = arms[j]
+                if pi.piece_id == pj.piece_id:
+                    continue
+                dot = float(np.dot(di, dj))
+                # This is a local geometric continuity test only, not a
+                # classification of the junction or a rejection of any arm.
+                if dot <= -0.70:
+                    pairs.append((dot, i, j))
 
-        if degree == 3:
-            dot, i, j = pairs[0]
-            if dot <= -0.72:  # at least ~136 degrees: continuous trunk
-                trunk_ids = {arms[i][0].piece_id, arms[j][0].piece_id}
-                for piece, _ in arms:
-                    if piece.piece_id in trunk_ids:
-                        piece.state = "certificat"
-                        piece.reason = "trunchi continuu la contact T/F; ramura atașată nu concurează"
-                    else:
-                        piece.state = "respins"
-                        piece.reason = "ramură la contact T/F; trunchiul continuu are prioritate"
-                pa, pb = arms[i][0], arms[j][0]
-                side_a = "start" if pa.start_node == node_id else "end"
-                side_b = "start" if pb.start_node == node_id else "end"
-                links.append((pa.piece_id, side_a, pb.piece_id, side_b, node_id))
-            else:
-                for piece, _ in arms:
-                    piece.state = "ambiguu"
-                    piece.reason = "joncțiune cu 3 brațe fără o pereche de trunchi clar continuă"
-        elif degree == 4:
-            # Search for two disjoint, near-opposite pairs. Those are the two
-            # mutually-exclusive through-lines of an X crossing.
-            best: Optional[Tuple[float, Tuple[int, int], Tuple[int, int]]] = None
-            indices = range(4)
-            pairings = [((0, 1), (2, 3)), ((0, 2), (1, 3)), ((0, 3), (1, 2))]
-            for p1, p2 in pairings:
-                d1 = float(np.dot(arms[p1[0]][1], arms[p1[1]][1]))
-                d2 = float(np.dot(arms[p2[0]][1], arms[p2[1]][1]))
-                score = max(d1, d2)
-                if best is None or score < best[0]:
-                    best = (score, p1, p2)
-            if best is not None and best[0] <= -0.72:
-                for piece, _ in arms:
-                    piece.state = "ambiguu"
-                    piece.reason = "intersecție X: două trasee continue, pereche mutual exclusivă; fără ghicire"
-                for pair in (best[1], best[2]):
-                    pa, pb = arms[pair[0]][0], arms[pair[1]][0]
-                    side_a = "start" if pa.start_node == node_id else "end"
-                    side_b = "start" if pb.start_node == node_id else "end"
-                    links.append((pa.piece_id, side_a, pb.piece_id, side_b, node_id))
-            else:
-                for piece, _ in arms:
-                    piece.state = "ambiguu"
-                    piece.reason = "joncțiune cu 4 brațe; topologie de intersecție neclară"
-        else:
-            for piece, _ in arms:
-                piece.state = "ambiguu"
-                piece.reason = f"joncțiune cu {degree} brațe; configurație neclasificată sigur"
+        pairs.sort(key=lambda item: item[0])  # most nearly opposite first
+        used: set[int] = set()
+        for _dot, i, j in pairs:
+            if i in used or j in used:
+                continue
+            pi, _di, side_i = arms[i]
+            pj, _dj, side_j = arms[j]
+            used.add(i)
+            used.add(j)
+            links.append((pi.piece_id, side_i, pj.piece_id, side_j, node_id))
+
     return links
 
 
-def merge_through_junctions(pieces: List[Piece], links: Sequence[Tuple[int, str, int, str, int]]) -> List[Piece]:
-    """Join arm fragments into complete through-strokes (T trunks and X pairs)."""
+def merge_collinear_sticks(pieces: List[Piece], links: Sequence[Tuple[int, str, int, str, int]]) -> List[Piece]:
+    """Join geometrically continuous arms while preserving every unpaired arm.""""
     by_id = {p.piece_id: p for p in pieces}
     endpoint_link: Dict[Tuple[int, str], Tuple[int, str]] = {}
     neighbours: Dict[int, set[int]] = {}
@@ -740,7 +685,7 @@ def merge_through_junctions(pieces: List[Piece], links: Sequence[Tuple[int, str,
             reason = "intersecție X: traseu continuu reconstruit; pereche mutual exclusivă, fără ghicire"
         else:
             state = "certificat"
-            reason = "trunchi continuu T/F reconstruit peste joncțiuni; ramurile laterale au fost excluse"
+            reason = "segmente coliniare reunite peste joncțiune; toate brațele neîmperecheate sunt păstrate"
         merged_piece = Piece(
             chain_id=min(by_id[pid].chain_id for pid in component),
             piece_id=min(source_ids), points=points,
@@ -753,37 +698,6 @@ def merge_through_junctions(pieces: List[Piece], links: Sequence[Tuple[int, str,
     # Components merged above are removed; all unlinked pieces remain untouched.
     merged_ids = {pid for p in merged for pid in (p.source_piece_ids or [])}
     return [p for p in pieces if p.piece_id not in merged_ids] + merged
-
-
-def classify_L_corners(pieces: List[Piece]) -> None:
-    """Keep both straight arms around an L bend; never choose by relative length.
-
-    A Pi-like stroke has two L contacts. Comparing the side legs with the top
-    bar independently can otherwise turn half of that single top bar grey.
-    The curve/bend remains separate, while both adjacent straight arms survive.
-    """
-    by_chain: Dict[int, List[Piece]] = {}
-    for piece in pieces:
-        by_chain.setdefault(piece.chain_id, []).append(piece)
-
-    for chain_pieces in by_chain.values():
-        chain_pieces.sort(key=lambda p: p.start_index)
-        for left, bend, right in zip(chain_pieces, chain_pieces[1:], chain_pieces[2:]):
-            if left.kind != "line" or bend.kind != "curve" or right.kind != "line":
-                continue
-            bend_len = float(np.sum(np.linalg.norm(np.diff(bend.points, axis=0), axis=1)))
-            if bend_len > 15.0 * max(left.mean_width, right.mean_width):
-                continue
-            if len(left.points) < 3 or len(right.points) < 3:
-                continue
-            vin = left.points[-1] - left.points[-3]
-            vout = right.points[2] - right.points[0]
-            turn = _angle_degrees(vin, vout)
-            if 55.0 <= turn <= 125.0:
-                left.state = "certificat"
-                left.reason = "colț L: brațul liniar este păstrat; fără competiție după lungime"
-                right.state = "certificat"
-                right.reason = "colț L: brațul liniar este păstrat; fără competiție după lungime"
 
 
 def _polyline_length(points: np.ndarray) -> float:
@@ -882,13 +796,12 @@ def process_image(
     skeleton = (skeleton_bool.astype(np.uint8) * 255)
     distance = ndi.distance_transform_edt(ink > 0)
 
-    chains, isolated, node_arm_counts = trace_chains(skeleton_bool, distance)
+    chains, isolated, _node_arm_counts = trace_chains(skeleton_bool, distance)
     chains = deduplicate_chains(chains, distance)
     pieces = split_chains(chains, distance)
     pieces = merge_continuous_chain_fragments(pieces)
-    junction_links = classify_junctions(pieces, node_arm_counts)
-    classify_L_corners(pieces)
-    pieces = merge_through_junctions(pieces, junction_links)
+    junction_links = link_collinear_continuations(pieces)
+    pieces = merge_collinear_sticks(pieces, junction_links)
 
     results: List[Dict[str, Any]] = []
     for piece in pieces:
