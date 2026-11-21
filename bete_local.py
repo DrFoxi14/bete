@@ -14,7 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from bete_engine import process_image
+from bete_engine import process_image as process_image_page1
+from bete_engine_page2 import process_image as process_image_page2
 
 ROOT = Path(__file__).resolve().parent
 WEB_FILE = ROOT / "index.html"
@@ -25,6 +26,8 @@ DEBUG_FILES = {
     "debug_1_cerneala.png",
     "debug_2_schelet.png",
     "debug_3_rezultat.png",
+    "debug_3_toate_betele.png",
+    "debug_4_context.png",
 }
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -54,7 +57,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_bytes(200, WEB_FILE.read_bytes(), "text/html; charset=utf-8")
             return
         if parsed.path == "/api/health":
-            self._send_json(200, {"ok": True, "engine": "bete_engine.py"})
+            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py"}})
             return
         if parsed.path.startswith("/api/files/"):
             self._serve_file(parsed.path)
@@ -71,7 +74,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Adresă invalidă."})
             return
         allowed_input = filename in {"input.png", "input.jpg", "input.jpeg"}
-        allowed_json = filename == "input_rezultate.json"
+        allowed_json = filename in {"input_rezultate.json", "input_bete_v2.json"}
         if filename not in DEBUG_FILES and not allowed_input and not allowed_json:
             self._send_json(403, {"error": "Fișierul nu este expus de server."})
             return
@@ -123,25 +126,49 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "Încărcarea fotografiei a fost incompletă."})
             return
 
+        page = query.get("page", ["1"])[0]
+        if page not in {"1", "2"}:
+            self._send_json(400, {"error": "Pagina trebuie să fie 1 sau 2."})
+            return
+
         run_id = uuid.uuid4().hex
         run_dir = DATA_ROOT / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
         input_path = run_dir / ("input" + extension)
         input_path.write_bytes(image_bytes)
         try:
-            result = process_image(input_path, run_dir, px_per_cm)
+            if page == "1":
+                result = process_image_page1(input_path, run_dir, px_per_cm)
+                debug_names = [
+                    "debug_1_cerneala.png",
+                    "debug_2_schelet.png",
+                    "debug_3_rezultat.png",
+                ]
+                json_name = "input_rezultate.json"
+                engine_name = "bete_engine.py"
+            else:
+                result = process_image_page2(input_path, run_dir, px_per_cm)
+                debug_names = [
+                    "debug_1_cerneala.png",
+                    "debug_2_schelet.png",
+                    "debug_3_toate_betele.png",
+                    "debug_4_context.png",
+                ]
+                json_name = "input_bete_v2.json"
+                engine_name = "bete_engine_page2.py"
         except Exception as exc:
             self._send_json(422, {"error": "Analiza a eșuat: " + str(exc)[:500]})
             return
 
         result["debug_images"] = {
-            "debug_1_cerneala": "/api/files/" + run_id + "/debug_1_cerneala.png",
-            "debug_2_schelet": "/api/files/" + run_id + "/debug_2_schelet.png",
-            "debug_3_rezultat": "/api/files/" + run_id + "/debug_3_rezultat.png",
+            Path(name).stem: "/api/files/" + run_id + "/" + name
+            for name in debug_names
         }
         result["original_image_url"] = "/api/files/" + run_id + "/input" + extension
-        result["json_download_url"] = "/api/files/" + run_id + "/input_rezultate.json"
+        result["json_download_url"] = "/api/files/" + run_id + "/" + json_name
         result["run_id"] = run_id
+        result["page"] = page
+        result["engine"] = engine_name
         self._send_json(200, result)
 
     def log_message(self, fmt: str, *args) -> None:
