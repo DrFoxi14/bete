@@ -26,15 +26,23 @@ Oprește serverul cu \`Ctrl+C\`.
 
 ## Cele două pagini
 
-### Pagina 1 — motorul nostru
+### Pagina 1 — extracție nedistructivă
 
-Rulează \`bete_engine.py\`. Reunește fragmente consecutive din același traseu atunci când forma combinată rămâne dreaptă sau ușor curbată. Nu mai respinge segmentele pe baza raportului lungime/grosime; fragmentele liniare foarte scurte sunt păstrate ca ambigue.
+Rulează \`bete_engine.py\`.
 
-### Pagina 2 — codul atașat
+Pagina 1 urmărește să detecteze toate segmentele liniare vizibile, fără reguli care aleg un câștigător la forme F/T/X/L și fără să elimine ramurile necoliniare. La fiecare joncțiune, motorul unește doar brațele cu direcții aproape opuse, ca să reconstruiască o linie continuă; orice braț neîmperecheat rămâne băț separat.
 
-Rulează \`bete_engine_page2.py\`. Fișierul este copiat exact din codul furnizat, fără modificări. Aplică extracția în Faza 1 și clasificarea relațională în Faza 2.
+Exemple geometrice urmărite:
+- F: trunchiul și cele două bare sunt păstrate ca trei bețe.
+- f: tija și bara mică sunt păstrate separat; cârligul curbat rămâne în stratul curbelor.
+- X: cele două trasee opuse sunt păstrate ca două bețe, fără verdict de exclusivitate.
+- π: bara de sus și cele două picioare sunt păstrate ca trei bețe.
 
-Ambele pagini folosesc aceeași fotografie selectată în interfață, dar fiecare analiză are propriul director de rezultate și propriul JSON.
+Fragmentele consecutive din același traseu sunt reunite când forma combinată rămâne dreaptă sau ușor curbată. Nu există filtru bazat pe raportul lungime/grosime. Pixelii izolați sunt raportați separat ca pete, iar curbele sunt afișate gri.
+
+### Pagina 2 — codul atașat v3
+
+Rulează \`bete_engine_page2.py\`. Fișierul este copia exactă a codului atașat în conversație, fără editări. Are 1.473 linii și 59.916 bytes UTF-8. Include extracția și clasificarea relațională din sursa originală și generează patru imagini de debug.
 
 ## Utilizare
 
@@ -42,18 +50,18 @@ Ambele pagini folosesc aceeași fotografie selectată în interfață, dar fieca
 2. Încarcă o fotografie PNG/JPG.
 3. Opțional, introdu calibrarea în pixeli/cm.
 4. Apasă butonul de rulare.
-5. Inspectează imaginile de debug și segmentele/bețele extrase.
+5. Inspectează imaginile de debug și bețele/segmentele extrase.
 6. Descarcă JSON-ul paginii respective.
 
 ## Linie de comandă
 
-Motorul Paginii 1:
+Pagina 1:
 
 \`\`\`bash
 python bete_engine.py fotografie.jpg --out-dir debug
 \`\`\`
 
-Motorul Paginii 2:
+Pagina 2:
 
 \`\`\`bash
 python bete_engine_page2.py fotografie.jpg --out-dir debug
