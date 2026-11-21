@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from bete_engine import process_image as process_image_page1
 from bete_engine_page2 import process_image as process_image_page2
+from bete_engine_page3 import process_image as process_image_page3
 
 ROOT = Path(__file__).resolve().parent
 WEB_FILE = ROOT / "index.html"
@@ -28,6 +29,9 @@ DEBUG_FILES = {
     "debug_3_rezultat.png",
     "debug_3_toate_betele.png",
     "debug_4_context.png",
+    "debug_1_binar_exact.png",
+    "debug_2_dss_toate.png",
+    "debug_3_verificare_xor.png",
 }
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -57,7 +61,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_bytes(200, WEB_FILE.read_bytes(), "text/html; charset=utf-8")
             return
         if parsed.path == "/api/health":
-            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py"}})
+            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py", "3": "bete_engine_page3.py"}})
             return
         if parsed.path.startswith("/api/files/"):
             self._serve_file(parsed.path)
@@ -74,7 +78,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Adresă invalidă."})
             return
         allowed_input = filename in {"input.png", "input.jpg", "input.jpeg"}
-        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json"}
+        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json", "input_dss_lossless.json"}
         if filename not in DEBUG_FILES and not allowed_input and not allowed_json:
             self._send_json(403, {"error": "Fișierul nu este expus de server."})
             return
@@ -127,8 +131,8 @@ class BeteHandler(BaseHTTPRequestHandler):
             return
 
         page = query.get("page", ["1"])[0]
-        if page not in {"1", "2"}:
-            self._send_json(400, {"error": "Pagina trebuie să fie 1 sau 2."})
+        if page not in {"1", "2", "3"}:
+            self._send_json(400, {"error": "Pagina trebuie să fie 1, 2 sau 3."})
             return
 
         run_id = uuid.uuid4().hex
@@ -146,7 +150,7 @@ class BeteHandler(BaseHTTPRequestHandler):
                 ]
                 json_name = "input_rezultate.json"
                 engine_name = "bete_engine.py"
-            else:
+            elif page == "2":
                 result = process_image_page2(input_path, run_dir, px_per_cm)
                 debug_names = [
                     "debug_1_cerneala.png",
@@ -156,6 +160,16 @@ class BeteHandler(BaseHTTPRequestHandler):
                 ]
                 json_name = "input_bete_v3.json"
                 engine_name = "bete_engine_page2.py"
+            else:
+                # Page 3 keeps its original API: scale=1.0 means native resolution.
+                result = process_image_page3(input_path, run_dir, scale=1.0)
+                debug_names = [
+                    "debug_1_binar_exact.png",
+                    "debug_2_dss_toate.png",
+                    "debug_3_verificare_xor.png",
+                ]
+                json_name = "input_dss_lossless.json"
+                engine_name = "bete_engine_page3.py"
         except Exception as exc:
             self._send_json(422, {"error": "Analiza a eșuat: " + str(exc)[:500]})
             return
