@@ -41,7 +41,7 @@
     .images{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.image-card{overflow:hidden;background:#121a22;border:1px solid var(--line);border-radius:14px}.image-card.wide{grid-column:1/-1}
     .image-label{padding:11px 13px 8px;display:flex;justify-content:space-between;align-items:center;gap:10px}.image-label strong{font-size:13px}.image-label small{font-size:11px;color:var(--muted)}
     .image-card img{display:block;width:100%;max-height:540px;object-fit:contain;background:#0c1117}
-    .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:13px}table{border-collapse:collapse;width:100%;min-width:850px;font-size:13px}
+    .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:13px}table{border-collapse:collapse;width:100%;min-width:1120px;font-size:13px}
     th,td{padding:11px 12px;border-bottom:1px solid #2a3541;text-align:left;vertical-align:top}th{background:#121a22;color:#aebdcd;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
     tbody tr:last-child td{border-bottom:0}td.reason{min-width:245px;color:#bfccd8}
     .tag{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap}
@@ -67,7 +67,7 @@
   <nav class="tabs" aria-label="Alege motorul">
     <button class="tab active" type="button" data-page="1">Pagina 1 · Motorul nostru</button>
     <button class="tab" type="button" data-page="2">Pagina 2 · Codul atașat v3</button>
-    <button class="tab" type="button" data-page="3">Pagina 3 · DSS lossless</button>
+    <button class="tab" type="button" data-page="3">Pagina 3 · Geometrie 0 + 1</button>
   </nav>
   <div class="page-explainer" id="pageExplainer">
     <strong>Pagina 1:</strong> extracție nedistructivă a bețelor; păstrează ramurile, fără reguli F/T/X/L.
@@ -91,7 +91,7 @@
           <input id="scale" type="number" min="0.01" step="any" placeholder="Ex. 120">
           <div class="hint">Fără calibrare, lungimile rămân în pixeli.</div>
         </div>
-        <div class="hint hidden" id="page3ScaleHint">Pagina 3 rulează la rezoluția nativă (scale = 1.0); această calibrare nu i se aplică.</div>
+        <div class="hint hidden" id="page3ScaleHint">Pagina 3 rulează la rezoluția nativă (scale = 1.0); calibrarea fizică nu i se aplică.</div>
         <button class="primary" id="analyze" type="button" disabled>Rulează Pagina 1</button>
         <div class="status" id="status" aria-live="polite">Selectează o fotografie pentru a începe.</div>
         <div class="hint">Fotografia este trimisă numai către serverul Python local, nu către internet.</div>
@@ -138,7 +138,7 @@ let selectedFile=null,previewUrl=null,selectedPage="1";
 const pageDescriptions={
  "1":"<strong>Pagina 1:</strong> extracție nedistructivă. Păstrează fiecare braț liniar; nu aplică reguli F/T/X/L și nu elimină bețe după lungime sau grosime. De exemplu, F = trei bețe, f = bățul mare plus bara mică, iar π = trei brațe.",
  "2":"<strong>Pagina 2:</strong> folosește <code>bete_engine_page2.py</code>, copia exactă a codului v3 atașat. Include extracția în Faza 1 și clasificarea relațională în Faza 2.",
- "3":"<strong>Pagina 3:</strong> folosește <code>bete_engine_page3.py</code>, copia exactă a codului atașat. Extrage contururi inter-pixel, le descompune în segmente digitale DSS și reconstruiește masca pentru verificare XOR."
+ "3":"<strong>Pagina 3:</strong> geometrie pură în două straturi. Stratul 0 descompune contururile în DSS și verifică reconstrucția XOR. Stratul 1 atribuie cerneala din mască benzilor drepte, benzilor curbe, petelor compacte și joncțiunilor."
 };
 function setStatus(message,kind){
  statusBox.textContent=message;statusBox.className="status "+(kind||"");
@@ -198,12 +198,12 @@ function renderStats(data,page){
    makeStat(roleCount,"Tipuri de rol contextual","")
   );
  }else{
-  const verify=data.lossless_verification||{};
+  const byType=data.counts.by_type||{};
   stats.append(
-   makeStat(data.counts.total_dss_segments,"Segmente DSS","green"),
-   makeStat(data.counts.closed_loops,"Contururi închise",""),
-   makeStat(data.counts.hole_loops,"Contururi interioare",""),
-   makeStat(verify.reconstructed_xor_error_pixels,"Erori XOR",Number(verify.reconstructed_xor_error_pixels)===0?"green":"red")
+   makeStat(data.counts.primitives_total,"Primitive geometrice","green"),
+   makeStat(byType.banda_dreapta||0,"Benzi drepte",""),
+   makeStat(byType.banda_curba||0,"Benzi curbe",""),
+   makeStat(byType.pata_compacta||0,"Pete compacte","")
   );
  }
 }
@@ -219,9 +219,10 @@ function renderImages(data,page){
   ["debug_3_toate_betele","03 · Toate bețele","extracția Fazei 1"],
   ["debug_4_context","04 · Context","clasificarea Fazei 2"]
  ]:[
-  ["debug_1_binar_exact","01 · Binar exact","masca de cerneală"],
-  ["debug_2_dss_toate","02 · Toate DSS","toate segmentele digitale"],
-  ["debug_3_verificare_xor","03 · Verificare XOR","verde = reconstrucție identică"]
+  ["debug_1_dss_exact","01 · Contururi DSS","toate muchiile inter-pixel"],
+  ["debug_2_tipuri","02 · Primitive geometrice","dreaptă / curbă / compactă / joncțiune"],
+  ["debug_3_alungire","03 · Harta alungirii","scara geometrică L/w"],
+  ["debug_4_verificare_100pct","04 · Acoperire 100%","verde = mască atribuită fără pierderi"]
  ];
  for(const [key,title,subtitle] of entries){
   const card=document.createElement("article");card.className="image-card"+(entries.length===3&&((key==="debug_3_rezultat")||(key==="debug_3_verificare_xor"))?" wide":"");
@@ -274,40 +275,53 @@ function renderPage2Table(sticks){
   addCell(row,(item.role_reason||"—")+(relationText?" | "+relationText:""),"reason");body.append(row);
  }
 }
-function renderPage3Table(segments){
- setTable(["DSS ID","Contur","Tip","Start → End","Pași de grilă","Lungime","Unghi","Parametri (a, b, μ)"]);
+function renderPage3Table(primitives){
+ setTable(["ID","Tip geometric","Centru (px)","Segment / BBox (px)","Lungime","Lățime","L/w","Unghi","Arie","Vecini"]);
  const body=document.getElementById("tableBody");body.replaceChildren();
- if(!segments||!segments.length){const row=document.createElement("tr");const cell=addCell(row,"Nu au fost extrase segmente DSS.","empty");cell.colSpan=8;body.append(row);return;}
- for(const item of segments){
+ if(!primitives||!primitives.length){const row=document.createElement("tr");const cell=addCell(row,"Masca nu conține primitive geometrice.","empty");cell.colSpan=10;body.append(row);return;}
+ const labels={banda_dreapta:"Bandă dreaptă",banda_curba:"Bandă curbă",pata_compacta:"Pată compactă"};
+ for(const item of primitives){
   const row=document.createElement("tr");
   addCell(row,"#"+item.id);
-  addCell(row,String(item.loop));
-  addCell(row,item.hole?"gol interior":"contur exterior");
-  addCell(row,"("+item.start[0]+", "+item.start[1]+") → ("+item.end[0]+", "+item.end[1]+")");
-  addCell(row,String(item.steps));
-  addCell(row,fmt(item.len,2)+" px");
-  addCell(row,fmt(item.ang,2)+"°");
-  const dss=item.dss||{};
-  addCell(row,"("+dss.a+", "+dss.b+", "+dss.mu+")");
+  addCell(row,labels[item.type]||item.type);
+  const c=item.center||[];
+  addCell(row,c.length===2?"("+fmt(c[0],1)+", "+fmt(c[1],1)+")":"—");
+  let extent="—";
+  if(Array.isArray(item.start)&&Array.isArray(item.end)){
+   extent="("+fmt(item.start[0],1)+", "+fmt(item.start[1],1)+") → ("+fmt(item.end[0],1)+", "+fmt(item.end[1],1)+")";
+  }else if(Array.isArray(item.bbox)){
+   extent="["+item.bbox.map(v=>fmt(v,1)).join(", ")+"]";
+  }
+  addCell(row,extent);
+  addCell(row,fmt(item.length_px,2)+" px");
+  addCell(row,fmt(item.width_px,2)+" px");
+  addCell(row,fmt(item.elongation,2));
+  addCell(row,fmt(item.angle_deg,2)+"°");
+  addCell(row,fmt(item.area_px,1)+" px²");
+  addCell(row,(item.neighbors||[]).map(v=>"#"+v).join(", ")||"—");
   body.append(row);
  }
 }
 function showPage3Proof(data){
  const box=document.getElementById("page3Proof");
  const v=data.lossless_verification||{};
- const ok=Boolean(v.guaranteed_lossless)&&Number(v.reconstructed_xor_error_pixels)===0;
+ const layer0=Number(v.layer0_dss_xor_error_pixels)===0;
+ const layer1=Boolean(v.guaranteed_100pct_coverage)&&Number(v.layer1_uncovered_ink_pixels)===0;
+ const ok=layer0&&layer1;
  box.classList.remove("hidden");
  box.style.borderColor=ok?"#46633a":"#8b3e3e";
  box.innerHTML="";
  const heading=document.createElement("strong");
- heading.textContent=ok?"VERIFICARE LOSSLESS: XOR = 0":"VERIFICAREA LOSSLESS NU ESTE CONFIRMATĂ";
+ heading.textContent=ok?"STRATUL 0: XOR = 0 · STRATUL 1: 0 pixeli neacoperiți":"VERIFICAREA CELOR DOUĂ STRATURI NU ESTE CONFIRMATĂ";
  heading.style.color=ok?"#c7f09a":"#ff9999";
  const detail=document.createElement("div");
  detail.textContent=
-  "Pixeli cerneală: "+fmt(v.ink_pixels_original,0)+
-  " · Muchii contur: "+fmt(v.crack_edges_total,0)+
-  " · Pași DSS: "+fmt(v.dss_steps_sum,0)+
-  " · Diferențe XOR: "+fmt(v.reconstructed_xor_error_pixels,0);
+  "Pixeli în mască: "+fmt(v.ink_pixels,0)+
+  " · Segmente DSS: "+fmt(data.counts?.dss_segments,0)+
+  " · Erori XOR: "+fmt(v.layer0_dss_xor_error_pixels,0)+
+  " · Pixeli neacoperiți: "+fmt(v.layer1_uncovered_ink_pixels,0)+
+  " · Joncțiuni: "+fmt(data.counts?.junctions,0)+
+  " · Capete absorbite: "+fmt(v.absorbed_endcap_pixels,0);
  detail.style.marginTop="5px";
  box.append(heading,detail);
 }
@@ -330,12 +344,12 @@ function showAnalysis(data,page){
   renderPage2Table(data.sticks);
   document.getElementById("limitations").textContent="Sursa Paginii 2 este codul atașat v3, păstrat nemodificat.";
  }else{
-  document.getElementById("tableTitle").textContent="Descompunere în segmente DSS";
-  document.getElementById("tableDescription").textContent="Segmentele digitale și parametrii lor exacți.";
-  document.getElementById("debugDescription").textContent="Masca, toate segmentele DSS și verificarea reconstrucției.";
-  renderPage3Table(data.segments);
+  document.getElementById("tableTitle").textContent="Partiția în primitive geometrice";
+  document.getElementById("tableDescription").textContent="Fiecare rând descrie o bandă dreaptă, o bandă curbă sau o pată compactă; vecinii indică relațiile dintre primitive.";
+  document.getElementById("debugDescription").textContent="Patru perspective: contururi DSS, tipuri geometrice, alungire și auditul acoperirii.";
+  renderPage3Table(data.primitives);
   showPage3Proof(data);
-  document.getElementById("limitations").textContent="Pagina 3 raportează verificarea XOR realizată de codul atașat. XOR = 0 confirmă reconstrucția identică a măștii binare, nu garantează că binarizarea a capturat fiecare urmă vizibilă în fotografia originală.";
+  document.getElementById("limitations").textContent="XOR = 0 certifică reconstrucția exactă a măștii binare. Zero pixeli neacoperiți certifică atribuirea tuturor pixelilor din acea mască unei primitive. Niciuna dintre verificări nu dovedește că binarizarea a capturat fiecare urmă din fotografia originală sau că tipul geometric coincide întotdeauna cu intenția de scriere.";
  }
  resultsSection.classList.remove("hidden");
  resultsSection.scrollIntoView({behavior:"smooth",block:"start"});
