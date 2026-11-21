@@ -601,19 +601,12 @@ def classify_junctions(pieces: List[Piece], node_arm_counts: Dict[int, int]) -> 
             else:
                 angle = _angle_degrees(arms[0][1], arms[1][1])
                 if 55.0 <= angle <= 125.0:
-                    lengths = [_polyline_length(arms[0][0].points), _polyline_length(arms[1][0].points)]
-                    ratio = max(lengths) / max(1e-6, min(lengths))
-                    if ratio >= 1.35:
-                        winner = 0 if lengths[0] >= lengths[1] else 1
-                        loser = 1 - winner
-                        arms[winner][0].state = "certificat"
-                        arms[winner][0].reason = f"colț L: brațul mai lung câștigă (raport {ratio:.2f} ≥ 1.35)"
-                        arms[loser][0].state = "respins"
-                        arms[loser][0].reason = f"ramură scurtă la colț L (raport {ratio:.2f} ≥ 1.35)"
-                    else:
-                        for piece, _ in arms:
-                            piece.state = "ambiguu"
-                            piece.reason = f"colț L: lungimi apropiate (raport {ratio:.2f} < 1.35)"
+                    # A right-angle contact is not a reason to delete either
+                    # geometric stroke. This is essential for Pi-like shapes:
+                    # the top bar meets each side leg at a separate L corner.
+                    for piece, _ in arms:
+                        piece.state = "certificat"
+                        piece.reason = "colț L: ambele brațe geometrice sunt păstrate ca bețe independente"
             continue
         if degree < 2:
             continue
@@ -763,7 +756,12 @@ def merge_through_junctions(pieces: List[Piece], links: Sequence[Tuple[int, str,
 
 
 def classify_L_corners(pieces: List[Piece]) -> None:
-    """Resolve two low-curvature arms separated by a compact ~90° bend."""
+    """Keep both straight arms around an L bend; never choose by relative length.
+
+    A Pi-like stroke has two L contacts. Comparing the side legs with the top
+    bar independently can otherwise turn half of that single top bar grey.
+    The curve/bend remains separate, while both adjacent straight arms survive.
+    """
     by_chain: Dict[int, List[Piece]] = {}
     for piece in pieces:
         by_chain.setdefault(piece.chain_id, []).append(piece)
@@ -781,21 +779,11 @@ def classify_L_corners(pieces: List[Piece]) -> None:
             vin = left.points[-1] - left.points[-3]
             vout = right.points[2] - right.points[0]
             turn = _angle_degrees(vin, vout)
-            if not 55.0 <= turn <= 125.0:
-                continue
-            llen = float(np.sum(np.linalg.norm(np.diff(left.points, axis=0), axis=1)))
-            rlen = float(np.sum(np.linalg.norm(np.diff(right.points, axis=0), axis=1)))
-            ratio = max(llen, rlen) / max(1e-6, min(llen, rlen))
-            if ratio >= 1.35:
-                winner, loser = (left, right) if llen >= rlen else (right, left)
-                winner.state = "certificat"
-                winner.reason = f"colț L: brațul mai lung câștigă (raport {ratio:.2f} ≥ 1.35)"
-                loser.state = "respins"
-                loser.reason = f"ramură scurtă la colț L (raport {ratio:.2f} ≥ 1.35)"
-            else:
-                for arm in (left, right):
-                    arm.state = "ambiguu"
-                    arm.reason = f"colț L: lungimi apropiate (raport {ratio:.2f} < 1.35)"
+            if 55.0 <= turn <= 125.0:
+                left.state = "certificat"
+                left.reason = "colț L: brațul liniar este păstrat; fără competiție după lungime"
+                right.state = "certificat"
+                right.reason = "colț L: brațul liniar este păstrat; fără competiție după lungime"
 
 
 def _polyline_length(points: np.ndarray) -> float:
