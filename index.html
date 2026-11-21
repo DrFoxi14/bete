@@ -60,16 +60,17 @@
   </header>
 
   <section class="intro">
-    <h2>Două motoare. Aceeași fotografie.</h2>
-    <p>Alege pagina motorului, încarcă fotografia o singură dată și compară rezultatele separat. Ambele variante rulează local pe calculator.</p>
+    <h2>Trei motoare. Aceeași fotografie.</h2>
+    <p>Alege unul dintre cele trei motoare, încarcă fotografia și inspectează separat rezultatele. Toate rulează local pe calculator.</p>
   </section>
 
   <nav class="tabs" aria-label="Alege motorul">
     <button class="tab active" type="button" data-page="1">Pagina 1 · Motorul nostru</button>
-    <button class="tab" type="button" data-page="2">Pagina 2 · Codul atașat</button>
+    <button class="tab" type="button" data-page="2">Pagina 2 · Codul atașat v3</button>
+    <button class="tab" type="button" data-page="3">Pagina 3 · DSS lossless</button>
   </nav>
   <div class="page-explainer" id="pageExplainer">
-    <strong>Pagina 1:</strong> motorul nostru revizuit. Reunește fragmente consecutive când traseul combinat rămâne drept/ușor curbat și nu elimină segmentele după raportul lungime/grosime.
+    <strong>Pagina 1:</strong> extracție nedistructivă a bețelor; păstrează ramurile, fără reguli F/T/X/L.
   </div>
 
   <section class="panel">
@@ -85,11 +86,12 @@
         </label>
       </div>
       <div class="settings">
-        <div class="field">
+        <div class="field" id="scaleField">
           <label for="scale">Calibrare (pixeli / cm) — opțional</label>
           <input id="scale" type="number" min="0.01" step="any" placeholder="Ex. 120">
           <div class="hint">Fără calibrare, lungimile rămân în pixeli.</div>
         </div>
+        <div class="hint hidden" id="page3ScaleHint">Pagina 3 rulează la rezoluția nativă (scale = 1.0); această calibrare nu i se aplică.</div>
         <button class="primary" id="analyze" type="button" disabled>Rulează Pagina 1</button>
         <div class="status" id="status" aria-live="polite">Selectează o fotografie pentru a începe.</div>
         <div class="hint">Fotografia este trimisă numai către serverul Python local, nu către internet.</div>
@@ -103,6 +105,7 @@
       <a class="secondary" id="downloadJson" href="#" download>↓ Descarcă JSON</a>
     </div>
     <div class="stats" id="stats"></div>
+    <div class="page-explainer hidden" id="page3Proof"></div>
 
     <div class="section">
       <div class="section-heading"><div><h2>Imagini de debug</h2><p id="debugDescription">Diagnostic vizual al motorului.</p></div></div>
@@ -134,7 +137,8 @@ let selectedFile=null,previewUrl=null,selectedPage="1";
 
 const pageDescriptions={
  "1":"<strong>Pagina 1:</strong> extracție nedistructivă. Păstrează fiecare braț liniar; nu aplică reguli F/T/X/L și nu elimină bețe după lungime sau grosime. De exemplu, F = trei bețe, f = bățul mare plus bara mică, iar π = trei brațe.",
- "2":"<strong>Pagina 2:</strong> folosește <code>bete_engine_page2.py</code>, copiat din codul atașat fără modificări. Include extracția în Faza 1 și clasificarea relațională în Faza 2."
+ "2":"<strong>Pagina 2:</strong> folosește <code>bete_engine_page2.py</code>, copia exactă a codului v3 atașat. Include extracția în Faza 1 și clasificarea relațională în Faza 2.",
+ "3":"<strong>Pagina 3:</strong> folosește <code>bete_engine_page3.py</code>, copia exactă a codului atașat. Extrage contururi inter-pixel, le descompune în segmente digitale DSS și reconstruiește masca pentru verificare XOR."
 };
 function setStatus(message,kind){
  statusBox.textContent=message;statusBox.className="status "+(kind||"");
@@ -143,6 +147,9 @@ function choosePage(page){
  selectedPage=page;
  document.querySelectorAll(".tab").forEach(button=>button.classList.toggle("active",button.dataset.page===page));
  document.getElementById("pageExplainer").innerHTML=pageDescriptions[page];
+ document.getElementById("scaleField").classList.toggle("hidden",page==="3");
+ document.getElementById("page3ScaleHint").classList.toggle("hidden",page!=="3");
+ document.getElementById("page3Proof").classList.add("hidden");
  analyzeButton.textContent="Rulează Pagina "+page;
  resultsSection.classList.add("hidden");
 }
@@ -182,13 +189,21 @@ function renderStats(data,page){
    makeStat(data.summary.rejected,"Respinse / curbe","gray"),
    makeStat(data.summary.skeleton_chains,"Trasee de schelet","")
   );
- }else{
+ }else if(page==="2"){
   const roleCount=Object.keys(data.counts.by_role||{}).length;
   stats.append(
    makeStat(data.counts.total_sticks,"Bețe extrase","green"),
    makeStat(data.counts.curves_separated,"Curbe separate","gray"),
    makeStat(data.counts.spots_ignored,"Pete / pixeli ignorați",""),
    makeStat(roleCount,"Tipuri de rol contextual","")
+  );
+ }else{
+  const verify=data.lossless_verification||{};
+  stats.append(
+   makeStat(data.counts.total_dss_segments,"Segmente DSS","green"),
+   makeStat(data.counts.closed_loops,"Contururi închise",""),
+   makeStat(data.counts.hole_loops,"Contururi interioare",""),
+   makeStat(verify.reconstructed_xor_error_pixels,"Erori XOR",Number(verify.reconstructed_xor_error_pixels)===0?"green":"red")
   );
  }
 }
@@ -198,14 +213,18 @@ function renderImages(data,page){
   ["debug_1_cerneala","01 · Cerneală","mască binară"],
   ["debug_2_schelet","02 · Schelet","schelet 1 px"],
   ["debug_3_rezultat","03 · Rezultat","verde / roșu / gri"]
- ]:[
+ ]:page==="2"?[
   ["debug_1_cerneala","01 · Cerneală","mască binară"],
   ["debug_2_schelet","02 · Schelet","schelet și noduri"],
   ["debug_3_toate_betele","03 · Toate bețele","extracția Fazei 1"],
   ["debug_4_context","04 · Context","clasificarea Fazei 2"]
+ ]:[
+  ["debug_1_binar_exact","01 · Binar exact","masca de cerneală"],
+  ["debug_2_dss_toate","02 · Toate DSS","toate segmentele digitale"],
+  ["debug_3_verificare_xor","03 · Verificare XOR","verde = reconstrucție identică"]
  ];
  for(const [key,title,subtitle] of entries){
-  const card=document.createElement("article");card.className="image-card"+(entries.length===3&&key==="debug_3_rezultat"?" wide":"");
+  const card=document.createElement("article");card.className="image-card"+(entries.length===3&&((key==="debug_3_rezultat")||(key==="debug_3_verificare_xor"))?" wide":"");
   const label=document.createElement("div");label.className="image-label";
   const strong=document.createElement("strong");strong.textContent=title;
   const small=document.createElement("small");small.textContent=subtitle;
@@ -255,10 +274,48 @@ function renderPage2Table(sticks){
   addCell(row,(item.role_reason||"—")+(relationText?" | "+relationText:""),"reason");body.append(row);
  }
 }
+function renderPage3Table(segments){
+ setTable(["DSS ID","Contur","Tip","Start → End","Pași de grilă","Lungime","Unghi","Parametri (a, b, μ)"]);
+ const body=document.getElementById("tableBody");body.replaceChildren();
+ if(!segments||!segments.length){const row=document.createElement("tr");const cell=addCell(row,"Nu au fost extrase segmente DSS.","empty");cell.colSpan=8;body.append(row);return;}
+ for(const item of segments){
+  const row=document.createElement("tr");
+  addCell(row,"#"+item.id);
+  addCell(row,String(item.loop));
+  addCell(row,item.hole?"gol interior":"contur exterior");
+  addCell(row,"("+item.start[0]+", "+item.start[1]+") → ("+item.end[0]+", "+item.end[1]+")");
+  addCell(row,String(item.steps));
+  addCell(row,fmt(item.len,2)+" px");
+  addCell(row,fmt(item.ang,2)+"°");
+  const dss=item.dss||{};
+  addCell(row,"("+dss.a+", "+dss.b+", "+dss.mu+")");
+  body.append(row);
+ }
+}
+function showPage3Proof(data){
+ const box=document.getElementById("page3Proof");
+ const v=data.lossless_verification||{};
+ const ok=Boolean(v.guaranteed_lossless)&&Number(v.reconstructed_xor_error_pixels)===0;
+ box.classList.remove("hidden");
+ box.style.borderColor=ok?"#46633a":"#8b3e3e";
+ box.innerHTML="";
+ const heading=document.createElement("strong");
+ heading.textContent=ok?"VERIFICARE LOSSLESS: XOR = 0":"VERIFICAREA LOSSLESS NU ESTE CONFIRMATĂ";
+ heading.style.color=ok?"#c7f09a":"#ff9999";
+ const detail=document.createElement("div");
+ detail.textContent=
+  "Pixeli cerneală: "+fmt(v.ink_pixels_original,0)+
+  " · Muchii contur: "+fmt(v.crack_edges_total,0)+
+  " · Pași DSS: "+fmt(v.dss_steps_sum,0)+
+  " · Diferențe XOR: "+fmt(v.reconstructed_xor_error_pixels,0);
+ detail.style.marginTop="5px";
+ box.append(heading,detail);
+}
 function showAnalysis(data,page){
  renderStats(data,page);renderImages(data,page);
  document.getElementById("resultTitle").textContent="Rezultatul Paginii "+page;
- document.getElementById("runInfo").textContent=data.image_size_px.width+" × "+data.image_size_px.height+" px · "+data.engine+" · Run "+data.run_id.slice(0,8);
+ const size=data.image_size_px||data.preprocessing?.working_size_px||{width:"—",height:"—"};
+ document.getElementById("runInfo").textContent=size.width+" × "+size.height+" px · "+data.engine+" · Run "+data.run_id.slice(0,8);
  document.getElementById("downloadJson").href=data.json_download_url;
  if(page==="1"){
   document.getElementById("tableTitle").textContent="Segmente detectate";
@@ -266,12 +323,19 @@ function showAnalysis(data,page){
   document.getElementById("debugDescription").textContent="Cele trei imagini ale motorului nostru.";
   renderPage1Table(data.segments);
   document.getElementById("limitations").textContent=(data.limitations||[]).join(" ");
- }else{
+ }else if(page==="2"){
   document.getElementById("tableTitle").textContent="Bețe extrase și roluri";
   document.getElementById("tableDescription").textContent="Toate bețele păstrate de codul atașat, cu relațiile calculate în Faza 2.";
   document.getElementById("debugDescription").textContent="Pagina 2 produce patru imagini de diagnostic.";
   renderPage2Table(data.sticks);
-  document.getElementById("limitations").textContent="Sursa Paginii 2 este codul atașat, păstrat nemodificat. Rolurile sunt clasificări contextuale; vezi JSON pentru toate relațiile.";
+  document.getElementById("limitations").textContent="Sursa Paginii 2 este codul atașat v3, păstrat nemodificat.";
+ }else{
+  document.getElementById("tableTitle").textContent="Descompunere în segmente DSS";
+  document.getElementById("tableDescription").textContent="Segmentele digitale și parametrii lor exacți.";
+  document.getElementById("debugDescription").textContent="Masca, toate segmentele DSS și verificarea reconstrucției.";
+  renderPage3Table(data.segments);
+  showPage3Proof(data);
+  document.getElementById("limitations").textContent="Pagina 3 raportează verificarea XOR realizată de codul atașat. XOR = 0 confirmă reconstrucția identică a măștii binare, nu garantează că binarizarea a capturat fiecare urmă vizibilă în fotografia originală.";
  }
  resultsSection.classList.remove("hidden");
  resultsSection.scrollIntoView({behavior:"smooth",block:"start"});
@@ -283,7 +347,7 @@ analyzeButton.addEventListener("click",async()=>{
  analyzeButton.disabled=true;analyzeButton.textContent="Se analizează Pagina "+selectedPage+"…";
  setStatus("Motorul Paginii "+selectedPage+" procesează fotografia.");
  const query=new URLSearchParams({filename:selectedFile.name,page:selectedPage});
- if(scale)query.set("px_per_cm",scale);
+ if(scale&&selectedPage!=="3")query.set("px_per_cm",scale);
  try{
   const response=await fetch("/api/analyze?"+query.toString(),{
    method:"POST",headers:{"Content-Type":"application/octet-stream"},body:selectedFile
