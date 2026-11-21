@@ -516,7 +516,7 @@ def merge_continuous_chain_fragments(pieces: List[Piece]) -> List[Piece]:
                                 combined = np.vstack((left.points, np.asarray(bridge), right.points))
                             sagitta, tortuosity = _page1_straightness(combined)
                             # These are shape-only tests; no length/width ratio is used.
-                            if sagitta <= 0.16 and tortuosity <= 1.15:
+                            if sagitta <= 0.19 and tortuosity <= 1.15:
                                 left_len = _polyline_length(left.points)
                                 right_len = _polyline_length(right.points)
                                 total = max(1e-6, left_len + right_len)
