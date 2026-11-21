@@ -679,7 +679,6 @@ def merge_collinear_sticks(pieces: List[Piece], links: Sequence[Tuple[int, str, 
 
         points = np.asarray(assembled, dtype=np.float32)
         source_ids = sorted(component)
-        states = {by_id[pid].state for pid in component}
         state = "certificat"
         reason = "segmente coliniare reunite peste joncțiune; toate brațele neîmperecheate sunt păstrate"
         merged_piece = Piece(
