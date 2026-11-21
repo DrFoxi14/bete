@@ -1,6 +1,6 @@
 # Bete Engine
 
-Motor geometric determinist pentru detectarea bețelor, cu două pagini de analiză locală.
+Set de trei motoare geometrice deterministe, cu interfață web locală.
 
 ## Instalare
 
@@ -24,51 +24,56 @@ Serverul pornește la \`http://127.0.0.1:8765\` și încearcă să deschidă bro
 
 Oprește serverul cu \`Ctrl+C\`.
 
-## Cele două pagini
+## Cele trei pagini
 
 ### Pagina 1 — extracție nedistructivă
 
-Rulează \`bete_engine.py\`.
-
-Pagina 1 urmărește să detecteze toate segmentele liniare vizibile, fără reguli care aleg un câștigător la forme F/T/X/L și fără să elimine ramurile necoliniare. La fiecare joncțiune, motorul unește doar brațele cu direcții aproape opuse, ca să reconstruiască o linie continuă; orice braț neîmperecheat rămâne băț separat.
-
-Exemple geometrice urmărite:
-- F: trunchiul și cele două bare sunt păstrate ca trei bețe.
-- f: tija și bara mică sunt păstrate separat; cârligul curbat rămâne în stratul curbelor.
-- X: cele două trasee opuse sunt păstrate ca două bețe, fără verdict de exclusivitate.
-- π: bara de sus și cele două picioare sunt păstrate ca trei bețe.
-
-Fragmentele consecutive din același traseu sunt reunite când forma combinată rămâne dreaptă sau ușor curbată. Nu există filtru bazat pe raportul lungime/grosime. Pixelii izolați sunt raportați separat ca pete, iar curbele sunt afișate gri.
+Rulează \`bete_engine.py\`. Păstrează brațele liniare la joncțiuni, fără reguli de câștigător F/T/X/L și fără filtrul lungime/grosime. Reunește numai brațele geometrice aproape coliniare; brațele neîmperecheate rămân independente.
 
 ### Pagina 2 — codul atașat v3
 
-Rulează \`bete_engine_page2.py\`. Fișierul este copia exactă a codului atașat în conversație, fără editări. Are 1.473 linii și 59.916 bytes UTF-8. Include extracția și clasificarea relațională din sursa originală și generează patru imagini de debug.
+Rulează \`bete_engine_page2.py\`. Fișierul este copia exactă a codului v3 atașat anterior: 1.473 linii, 59.916 bytes UTF-8. Include extracție și clasificare relațională în două faze.
+
+### Pagina 3 — extractor lossless DSS
+
+Rulează \`bete_engine_page3.py\`. Fișierul este copia exactă a ultimului cod atașat: 560 de linii, 19.207 bytes UTF-8.
+
+Pagina 3:
+- estimează masca binară a cernelii;
+- extrage contururile inter-pixel în bucle exterioare și interioare;
+- descompune contururile în segmente digitale drepte (DSS);
+- reconstruiește masca exclusiv din DSS;
+- calculează XOR între masca inițială și reconstrucție și oprește analiza dacă există pixeli diferiți.
+
+**Interpretarea XOR:** XOR = 0 certifică faptul că lista DSS reconstruiește exact masca binară produsă de binarizare. Nu certifică faptul că binarizarea a detectat absolut toată cerneala vizibilă în fotografia originală. Calitatea măștii și acoperirea reconstrucției sunt două verificări diferite.
+
+Pagina 3 rulează la rezoluția nativă cu \`scale=1.0\`. Câmpul de calibrare pixeli/cm este ascuns pentru această pagină, deoarece parametrul \`scale\` al motorului înseamnă scalarea imaginii, nu calibrare fizică.
 
 ## Utilizare
 
-1. Alege Pagina 1 sau Pagina 2.
+1. Alege Pagina 1, 2 sau 3.
 2. Încarcă o fotografie PNG/JPG.
-3. Opțional, introdu calibrarea în pixeli/cm.
+3. Opțional, introdu calibrarea pixeli/cm pentru Paginile 1 și 2.
 4. Apasă butonul de rulare.
-5. Inspectează imaginile de debug și bețele/segmentele extrase.
-6. Descarcă JSON-ul paginii respective.
+5. Inspectează imaginile de debug și tabelul rezultat.
+6. Descarcă JSON-ul analizei respective.
 
 ## Linie de comandă
 
-Pagina 1:
-
 \`\`\`bash
 python bete_engine.py fotografie.jpg --out-dir debug
+python bete_engine_page2.py fotografie.jpg --out-dir debug
+python bete_engine_page3.py fotografie.jpg --out-dir debug
 \`\`\`
 
-Pagina 2:
+Pentru Pagina 3 se poate seta opțional scalarea imaginii:
 
 \`\`\`bash
-python bete_engine_page2.py fotografie.jpg --out-dir debug
+python bete_engine_page3.py fotografie.jpg --out-dir debug_dss --scale 1.0
 \`\`\`
 
 ## Date locale
 
-Interfața folosește exclusiv serverul Python pornit pe calculator. Fotografiile, imaginile de debug și rezultatele sunt păstrate în \`.bete_local/runs/\`, folder ignorat de Git. Nu există upload către servicii externe.
+Interfața folosește exclusiv serverul Python pornit pe calculator. Fotografiile, imaginile de debug și JSON-urile sunt păstrate în \`.bete_local/runs/\`, folder ignorat de Git. Nu există upload către servicii externe.
 
 Limita implicită este de 25 MB per fotografie. Serverul ascultă implicit numai pe \`127.0.0.1\`.
