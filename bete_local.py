@@ -32,6 +32,10 @@ DEBUG_FILES = {
     "debug_1_binar_exact.png",
     "debug_2_dss_toate.png",
     "debug_3_verificare_xor.png",
+    "debug_1_dss_exact.png",
+    "debug_2_tipuri.png",
+    "debug_3_alungire.png",
+    "debug_4_verificare_100pct.png",
 }
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -78,7 +82,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Adresă invalidă."})
             return
         allowed_input = filename in {"input.png", "input.jpg", "input.jpeg"}
-        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json", "input_dss_lossless.json"}
+        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json", "input_dss_lossless.json", "input_geometry_layer1.json"}
         if filename not in DEBUG_FILES and not allowed_input and not allowed_json:
             self._send_json(403, {"error": "Fișierul nu este expus de server."})
             return
@@ -161,15 +165,22 @@ class BeteHandler(BaseHTTPRequestHandler):
                 json_name = "input_bete_v3.json"
                 engine_name = "bete_engine_page2.py"
             else:
-                # Page 3 keeps its original API: scale=1.0 means native resolution.
+                # Page 3: stratul 0 (DSS exact) + stratul 1 (partiție geometrică).
                 result = process_image_page3(input_path, run_dir, scale=1.0)
                 debug_names = [
-                    "debug_1_binar_exact.png",
-                    "debug_2_dss_toate.png",
-                    "debug_3_verificare_xor.png",
+                    "debug_1_dss_exact.png",
+                    "debug_2_tipuri.png",
+                    "debug_3_alungire.png",
+                    "debug_4_verificare_100pct.png",
                 ]
-                json_name = "input_dss_lossless.json"
+                json_name = "input_geometry_layer1.json"
                 engine_name = "bete_engine_page3.py"
+                # API-ul motorului întoarce sumarul; încărcăm primitivele/joncțiunile
+                # din JSON-ul complet generat în același director al execuției.
+                full_result_path = Path(result["json_file"])
+                full_result = json.loads(full_result_path.read_text(encoding="utf-8"))
+                result["primitives"] = full_result.get("primitives", [])
+                result["junctions"] = full_result.get("junctions", [])
         except Exception as exc:
             self._send_json(422, {"error": "Analiza a eșuat: " + str(exc)[:500]})
             return
