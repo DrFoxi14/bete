@@ -74,7 +74,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Adresă invalidă."})
             return
         allowed_input = filename in {"input.png", "input.jpg", "input.jpeg"}
-        allowed_json = filename in {"input_rezultate.json", "input_bete_v2.json"}
+        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json"}
         if filename not in DEBUG_FILES and not allowed_input and not allowed_json:
             self._send_json(403, {"error": "Fișierul nu este expus de server."})
             return
@@ -154,7 +154,7 @@ class BeteHandler(BaseHTTPRequestHandler):
                     "debug_3_toate_betele.png",
                     "debug_4_context.png",
                 ]
-                json_name = "input_bete_v2.json"
+                json_name = "input_bete_v3.json"
                 engine_name = "bete_engine_page2.py"
         except Exception as exc:
             self._send_json(422, {"error": "Analiza a eșuat: " + str(exc)[:500]})
