@@ -1,8 +1,8 @@
 # Bete Engine
 
-Motor geometric determinist pentru detectarea segmentelor desenate de mână și interfață web locală.
+Motor geometric determinist pentru detectarea bețelor, cu două pagini de analiză locală.
 
-## 1. Instalare
+## Instalare
 
 Necesită Python 3.10+.
 
@@ -12,7 +12,7 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 \`\`\`
 
-## 2. Pornește interfața locală
+## Pornește interfața web locală
 
 Din directorul repo-ului:
 
@@ -20,29 +20,47 @@ Din directorul repo-ului:
 python bete_local.py
 \`\`\`
 
-Serverul pornește pe \`http://127.0.0.1:8765\` și încearcă să deschidă browserul implicit (Safari pe macOS). Dacă pagina nu se deschide automat, copiază adresa în browser.
+Serverul pornește la \`http://127.0.0.1:8765\` și încearcă să deschidă browserul implicit. Dacă pagina nu se deschide automat, copiază adresa în Safari.
 
 Oprește serverul cu \`Ctrl+C\`.
 
-## 3. Folosire
+## Cele două pagini
 
-1. Încarcă o fotografie PNG/JPG.
-2. Opțional, introdu calibrarea în pixeli/cm.
-3. Apasă **Analizează fotografia**.
-4. Vezi numărul de segmente certificate, ambigue și respinse.
-5. Inspectează cele trei imagini de debug și descarcă JSON-ul.
+### Pagina 1 — motorul nostru
 
-## 4. Linie de comandă
+Rulează \`bete_engine.py\`. Reunește fragmente consecutive din același traseu atunci când forma combinată rămâne dreaptă sau ușor curbată. Nu mai respinge segmentele pe baza raportului lungime/grosime; fragmentele liniare foarte scurte sunt păstrate ca ambigue.
 
-Motorul poate fi folosit și fără interfață:
+### Pagina 2 — codul atașat
+
+Rulează \`bete_engine_page2.py\`. Fișierul este copiat exact din codul furnizat, fără modificări. Aplică extracția în Faza 1 și clasificarea relațională în Faza 2.
+
+Ambele pagini folosesc aceeași fotografie selectată în interfață, dar fiecare analiză are propriul director de rezultate și propriul JSON.
+
+## Utilizare
+
+1. Alege Pagina 1 sau Pagina 2.
+2. Încarcă o fotografie PNG/JPG.
+3. Opțional, introdu calibrarea în pixeli/cm.
+4. Apasă butonul de rulare.
+5. Inspectează imaginile de debug și segmentele/bețele extrase.
+6. Descarcă JSON-ul paginii respective.
+
+## Linie de comandă
+
+Motorul Paginii 1:
 
 \`\`\`bash
 python bete_engine.py fotografie.jpg --out-dir debug
-python bete_engine.py fotografie.jpg --out-dir debug --px-per-cm 120
 \`\`\`
 
-## Date și confidențialitate
+Motorul Paginii 2:
 
-Interfața folosește exclusiv serverul Python pornit pe calculator. Fotografiile și rezultatele fiecărei sesiuni sunt păstrate în \`.bete_local/runs/\`, folder ignorat de Git. Nu există upload către un serviciu extern.
+\`\`\`bash
+python bete_engine_page2.py fotografie.jpg --out-dir debug
+\`\`\`
 
-Limita implicită pentru o fotografie este 25 MB. Serverul ascultă implicit doar pe \`127.0.0.1\`, nu pe întreaga rețea.
+## Date locale
+
+Interfața folosește exclusiv serverul Python pornit pe calculator. Fotografiile, imaginile de debug și rezultatele sunt păstrate în \`.bete_local/runs/\`, folder ignorat de Git. Nu există upload către servicii externe.
+
+Limita implicită este de 25 MB per fotografie. Serverul ascultă implicit numai pe \`127.0.0.1\`.
