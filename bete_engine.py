@@ -429,6 +429,7 @@ def _runs(mask: np.ndarray) -> List[Tuple[int, int, bool]]:
 
 
 def split_chains(chains: Sequence[Chain], distance: np.ndarray) -> List[Piece]:
+    """Split only by curvature; never reject a straight piece by its width ratio."""
     pieces: List[Piece] = []
     next_piece_id = 1
     for chain_id, chain in enumerate(chains, start=1):
@@ -453,16 +454,98 @@ def split_chains(chains: Sequence[Chain], distance: np.ndarray) -> List[Piece]:
             if is_curve:
                 piece.state = "respins"
                 piece.reason = "curbură locală mare / arc / întoarcere; separat prin analiza tangentei"
+            elif len(np.unique(np.rint(part_points).astype(np.int32), axis=0)) < 4:
+                piece.state = "ambiguu"
+                piece.reason = "fragment liniar foarte scurt; păstrat pentru verificare, nu eliminat după grosime"
             else:
-                arc_length = float(np.sum(np.linalg.norm(np.diff(part_points, axis=0), axis=1)))
-                if arc_length <= 3.0 * mean_width:
-                    piece.state = "respins"
-                    piece.reason = "pată: lungime ≤ 3× grosimea locală a trăsăturii"
-                else:
-                    piece.reason = "curbură locală sub prag; segment geometric candidat"
+                piece.reason = "segment liniar candidat; fără prag lungime/grosime"
             pieces.append(piece)
             next_piece_id += 1
     return pieces
+
+
+def _page1_straightness(points: np.ndarray) -> Tuple[float, float]:
+    """Return (sagitta/chord, arc/chord), independent of pen thickness."""
+    if len(points) < 3:
+        return 0.0, 1.0
+    chord_vec = points[-1] - points[0]
+    chord = float(np.linalg.norm(chord_vec))
+    arc = _polyline_length(points)
+    if chord < 1e-6:
+        return float("inf"), float("inf")
+    relative = points - points[0]
+    cross = np.abs(relative[:, 0] * chord_vec[1] - relative[:, 1] * chord_vec[0])
+    sagitta = float(np.max(cross) / chord)
+    return sagitta / chord, arc / chord
+
+
+def merge_continuous_chain_fragments(pieces: List[Piece]) -> List[Piece]:
+    """Rejoin adjacent curvature fragments of the SAME skeleton chain.
+
+    A short high-curvature cut is absorbed only when the combined path remains
+    geometrically straight/gently bowed. This repairs false curve cuts such as
+    814→815 without joining a real loop or hairpin into a stick.
+    """
+    by_chain: Dict[int, List[Piece]] = {}
+    for piece in pieces:
+        by_chain.setdefault(piece.chain_id, []).append(piece)
+
+    output: List[Piece] = []
+    for chain_id, chain_pieces in by_chain.items():
+        work = sorted(chain_pieces, key=lambda p: (p.start_index, p.end_index))
+        changed = True
+        while changed and len(work) > 1:
+            changed = False
+            merged_work: List[Piece] = []
+            i = 0
+            while i < len(work):
+                if i + 1 < len(work):
+                    left, right = work[i], work[i + 1]
+                    contiguous = right.start_index - left.end_index <= 1
+                    if contiguous and right.start_index >= left.start_index:
+                        gap = float(np.linalg.norm(left.points[-1] - right.points[0]))
+                        if gap <= 2.5:
+                            if gap <= 1.5:
+                                combined = np.vstack((left.points, right.points[1:]))
+                            else:
+                                bridge_count = max(1, int(math.ceil(gap)))
+                                bridge = [
+                                    left.points[-1] + (right.points[0] - left.points[-1]) * (t / bridge_count)
+                                    for t in range(1, bridge_count)
+                                ]
+                                combined = np.vstack((left.points, np.asarray(bridge), right.points))
+                            sagitta, tortuosity = _page1_straightness(combined)
+                            # These are shape-only tests; no length/width ratio is used.
+                            if sagitta <= 0.16 and tortuosity <= 1.15:
+                                left_len = _polyline_length(left.points)
+                                right_len = _polyline_length(right.points)
+                                total = max(1e-6, left_len + right_len)
+                                merged_piece = Piece(
+                                    chain_id=chain_id,
+                                    piece_id=min(left.piece_id, right.piece_id),
+                                    points=combined.astype(np.float32),
+                                    start_index=min(left.start_index, right.start_index),
+                                    end_index=max(left.end_index, right.end_index),
+                                    mean_width=(left.mean_width * left_len + right.mean_width * right_len) / total,
+                                    kind="line",
+                                    start_node=left.start_node,
+                                    end_node=right.end_node,
+                                    state="certificat",
+                                    reason="fragmente consecutive reunite; traseu combinat drept/ușor curbat, fără filtru lungime/grosime",
+                                    source_piece_ids=sorted(set(
+                                        (left.source_piece_ids or [left.piece_id]) +
+                                        (right.source_piece_ids or [right.piece_id])
+                                    )),
+                                )
+                                merged_work.append(merged_piece)
+                                i += 2
+                                changed = True
+                                continue
+                merged_work.append(work[i])
+                i += 1
+            work = sorted(merged_work, key=lambda p: (p.start_index, p.end_index))
+        output.extend(work)
+    return sorted(output, key=lambda p: (p.chain_id, p.start_index, p.piece_id))
 
 
 def _piece_outward_direction(piece: Piece, node_id: int) -> Optional[np.ndarray]:
@@ -814,6 +897,7 @@ def process_image(
     chains, isolated, node_arm_counts = trace_chains(skeleton_bool, distance)
     chains = deduplicate_chains(chains, distance)
     pieces = split_chains(chains, distance)
+    pieces = merge_continuous_chain_fragments(pieces)
     junction_links = classify_junctions(pieces, node_arm_counts)
     classify_L_corners(pieces)
     pieces = merge_through_junctions(pieces, junction_links)
@@ -823,10 +907,6 @@ def process_image(
         points = np.rint(piece.points).astype(int)
         length_px = _polyline_length(piece.points)
         width = max(1.0, piece.mean_width)
-        if (length_px <= 3.0 * width and piece.state == "certificat"
-                and not piece.reason.startswith("trunchi continuu")):
-            piece.state = "respins"
-            piece.reason = "pată: lungime ≤ 3× grosimea locală a trăsăturii"
         x1, y1 = map(int, points[0])
         x2, y2 = map(int, points[-1])
         results.append({
