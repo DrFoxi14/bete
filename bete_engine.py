@@ -615,7 +615,7 @@ def link_collinear_continuations(
 
 
 def merge_collinear_sticks(pieces: List[Piece], links: Sequence[Tuple[int, str, int, str, int]]) -> List[Piece]:
-    """Join geometrically continuous arms while preserving every unpaired arm.""""
+    """Join geometrically continuous arms while preserving every unpaired arm."""
     by_id = {p.piece_id: p for p in pieces}
     endpoint_link: Dict[Tuple[int, str], Tuple[int, str]] = {}
     neighbours: Dict[int, set[int]] = {}
@@ -680,12 +680,8 @@ def merge_collinear_sticks(pieces: List[Piece], links: Sequence[Tuple[int, str, 
         points = np.asarray(assembled, dtype=np.float32)
         source_ids = sorted(component)
         states = {by_id[pid].state for pid in component}
-        if "ambiguu" in states:
-            state = "ambiguu"
-            reason = "intersecție X: traseu continuu reconstruit; pereche mutual exclusivă, fără ghicire"
-        else:
-            state = "certificat"
-            reason = "segmente coliniare reunite peste joncțiune; toate brațele neîmperecheate sunt păstrate"
+        state = "certificat"
+        reason = "segmente coliniare reunite peste joncțiune; toate brațele neîmperecheate sunt păstrate"
         merged_piece = Piece(
             chain_id=min(by_id[pid].chain_id for pid in component),
             piece_id=min(source_ids), points=points,
@@ -853,8 +849,8 @@ def process_image(
         "debug_images": debug_paths,
         "limitations": [
             "Fără scară/calibrare în fotografie, distanțele fizice în cm nu pot fi deduse.",
-            "Regulile topologice sunt deterministe; fotografiile cu suprapuneri foarte groase pot rămâne ambigue.",
-            "Pragurile de curbură sunt raportate la grosimea estimată a pixului, nu la o lungime absolută.",
+            "Brațele necoliniare de la joncțiuni sunt păstrate separat; traseele coliniare sunt reunite geometric.",
+            "Pragurile de curbură sunt raportate la geometria traseului, nu la un raport lungime/grosime.",
         ],
     }
     out_path = Path(out_dir) / f"{image_path.stem}_rezultate.json"
