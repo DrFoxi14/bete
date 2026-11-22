@@ -232,7 +232,10 @@ function renderImages(data,page){
   ["debug_1_dss_exact","01 · Contururi DSS","toate muchiile inter-pixel"],
   ["debug_2_tipuri","02 · Primitive geometrice","dreaptă / curbă / compactă / joncțiune"],
   ["debug_3_alungire","03 · Harta alungirii","scara geometrică L/w"],
-  ["debug_4_verificare_100pct","04 · Acoperire 100%","verde = mască atribuită fără pierderi"]
+  ["debug_4_verificare_100pct","04 · Acoperire 100%","verde = mască atribuită fără pierderi"],
+  ["debug_l2_1_grile_si_bare","05 · Grile și bare","grile periodice și bare transversale · Stratul 2"],
+  ["debug_l2_2_poduri_si_ancore","06 · Poduri și ancore","relații între benzi și capete ancorate · Stratul 2"],
+  ["debug_l2_3_coridoare_si_siruri","07 · Coridoare și rânduri","molecule și aliniamente · Stratul 2"]
  ];
  for(const [key,title,subtitle] of entries){
   const card=document.createElement("article");card.className="image-card"+(entries.length===3&&((key==="debug_3_rezultat")||(key==="debug_3_verificare_xor"))?" wide":"");
@@ -240,7 +243,7 @@ function renderImages(data,page){
   const strong=document.createElement("strong");strong.textContent=title;
   const small=document.createElement("small");small.textContent=subtitle;
   label.append(strong,small);
-  const img=document.createElement("img");img.alt=title;img.loading="lazy";img.src=data.debug_images[key];
+  const img=document.createElement("img");img.alt=title;img.loading="lazy";img.src=(data.debug_images||{})[key]||(data.layer2_debug_images||{})[key]||"";
   card.append(label,img);container.append(card);
  }
 }
