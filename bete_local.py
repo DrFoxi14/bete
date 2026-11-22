@@ -69,7 +69,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_bytes(200, WEB_FILE.read_bytes(), "text/html; charset=utf-8")
             return
         if parsed.path == "/api/health":
-            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py", "3": "bete_engine_page3.py"}})
+            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py", "3": "bete_engine_page3.py + geometry_layer2.py"}})
             return
         if parsed.path.startswith("/api/files/"):
             self._serve_file(parsed.path)
@@ -224,8 +224,6 @@ class BeteHandler(BaseHTTPRequestHandler):
         }
         result["original_image_url"] = "/api/files/" + run_id + "/input" + extension
         result["json_download_url"] = "/api/files/" + run_id + "/" + json_name
-        if page == "3" and "layer2_json_download_url" not in result:
-            raise RuntimeError("Execuția Paginii 3 nu a produs un raport valid pentru Stratul 2.")
         result["run_id"] = run_id
         result["page"] = page
         result["engine"] = engine_name
