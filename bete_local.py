@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from bete_engine import process_image as process_image_page1
 from bete_engine_page2 import process_image as process_image_page2
 from bete_engine_page3 import process_image as process_image_page3
+from geometry_layer2 import process_layer1_json
 
 ROOT = Path(__file__).resolve().parent
 WEB_FILE = ROOT / "index.html"
@@ -36,6 +37,9 @@ DEBUG_FILES = {
     "debug_2_tipuri.png",
     "debug_3_alungire.png",
     "debug_4_verificare_100pct.png",
+    "debug_l2_1_grile_si_bare.png",
+    "debug_l2_2_poduri_si_ancore.png",
+    "debug_l2_3_coridoare_si_siruri.png",
 }
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -82,7 +86,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Adresă invalidă."})
             return
         allowed_input = filename in {"input.png", "input.jpg", "input.jpeg"}
-        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json", "input_dss_lossless.json", "input_geometry_layer1.json"}
+        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json", "input_dss_lossless.json", "input_geometry_layer1.json", "input_geometry_layer2.json"}
         if filename not in DEBUG_FILES and not allowed_input and not allowed_json:
             self._send_json(403, {"error": "Fișierul nu este expus de server."})
             return
@@ -177,10 +181,39 @@ class BeteHandler(BaseHTTPRequestHandler):
                 engine_name = "bete_engine_page3.py"
                 # API-ul motorului întoarce sumarul; încărcăm primitivele/joncțiunile
                 # din JSON-ul complet generat în același director al execuției.
-                full_result_path = Path(result["json_file"])
+                full_result_path = Path(result["json_file"]).resolve()
+                if full_result_path.parent != run_dir.resolve() or full_result_path.name != "input_geometry_layer1.json":
+                    raise RuntimeError("Stratul 1 a produs un JSON în afara execuției curente.")
                 full_result = json.loads(full_result_path.read_text(encoding="utf-8"))
                 result["primitives"] = full_result.get("primitives", [])
                 result["junctions"] = full_result.get("junctions", [])
+
+                # Stratul 2 este strict condiționat de trecerea Straturilor 0 + 1.
+                proof = full_result.get("lossless_verification", {})
+                if int(proof.get("layer0_dss_xor_error_pixels", -1)) != 0:
+                    raise RuntimeError("Stratul 2 blocat: verificarea XOR a Stratului 0 nu este zero.")
+                if int(proof.get("layer1_uncovered_ink_pixels", -1)) != 0 or proof.get("guaranteed_100pct_coverage") is not True:
+                    raise RuntimeError("Stratul 2 blocat: Stratul 1 nu a confirmat acoperirea 100%.")
+
+                # Funcția primește numai JSON-ul validat din Stratul 1; imaginea este
+                # folosită de ea exclusiv ca fundal pentru imaginile de debug.
+                layer2_result = process_layer1_json(full_result_path, run_dir, image_override=str(input_path))
+                audit = layer2_result.get("accounting_verification", {})
+                if (audit.get("guaranteed_100pct_accounting") is not True
+                        or int(audit.get("unaccounted_primitives", -1)) != 0
+                        or int(audit.get("duplicate_primitives", -1)) != 0):
+                    raise RuntimeError("Stratul 2 nu a confirmat contabilitatea completă a primitivelor.")
+                result["layer2"] = {
+                    key: value for key, value in layer2_result.items()
+                    if key not in {"debug_images", "json_file"}
+                }
+                result["layer2_debug_images"] = {
+                    Path(name).stem: "/api/files/" + run_id + "/" + Path(name).name
+                    for name in layer2_result["debug_images"].values()
+                }
+                result["layer1_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer1.json"
+                result["layer2_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer2.json"
+                json_name = "input_geometry_layer2.json"
         except Exception as exc:
             self._send_json(422, {"error": "Analiza a eșuat: " + str(exc)[:500]})
             return
@@ -191,6 +224,8 @@ class BeteHandler(BaseHTTPRequestHandler):
         }
         result["original_image_url"] = "/api/files/" + run_id + "/input" + extension
         result["json_download_url"] = "/api/files/" + run_id + "/" + json_name
+        if page == "3" and "layer2_json_download_url" not in result:
+            raise RuntimeError("Execuția Paginii 3 nu a produs un raport valid pentru Stratul 2.")
         result["run_id"] = run_id
         result["page"] = page
         result["engine"] = engine_name
