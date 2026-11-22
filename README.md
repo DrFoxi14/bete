@@ -1,6 +1,6 @@
 # Bete Engine
 
-Set de trei motoare geometrice deterministe, cu interfață web locală.
+Set de trei pagini geometrice deterministe, cu Pagina 3 organizată în trei straturi și interfață web locală.
 
 ## Instalare
 
@@ -55,7 +55,28 @@ Motorul verifică automat două condiții distincte: reconstrucția DSS (layer0_
 
 **Limitele verificării:** aceste verificări se referă la masca binară produsă de binarizare. Ele nu dovedesc că binarizarea a capturat fiecare urmă vizibilă în fotografia originală și nici că eticheta geometrică a fiecărei primitive coincide întotdeauna cu intenția de scriere. Acoperirea pixelilor și identificarea semantică a fiecărui băț sunt probleme diferite.
 
-Pagina 3 rulează la rezoluția nativă cu scale=1.0. Câmpul de calibrare pixeli/cm este ascuns pentru această pagină, deoarece scale înseamnă scalarea imaginii, nu calibrare fizică. Produce patru imagini de debug și un JSON cu sumar, primitive și joncțiuni.
+Pagina 3 rulează la rezoluția nativă cu scale=1.0. Câmpul de calibrare pixeli/cm este ascuns pentru această pagină, deoarece scale înseamnă scalarea imaginii, nu calibrare fizică.
+
+### Stratul 2 — topologie și organizare geometrică
+
+Modul separat: geometry_layer2.py. Acesta nu primește fotografia ca intrare analitică și nu recalculează pixeli. Primește exclusiv JSON-ul *_geometry_layer1.json produs de Pagina 3 după Straturile 0 + 1.
+
+**Poarta obligatorie înainte de rulare:**
+- layer0_dss_xor_error_pixels trebuie să fie 0;
+- layer1_uncovered_ink_pixels trebuie să fie 0;
+- guaranteed_100pct_coverage trebuie să fie true;
+- lista de primitive și numărul lor trebuie să fie valide.
+
+Dacă oricare condiție nu este îndeplinită, geometry_layer2.py oprește execuția. Serverul local aplică aceeași poartă și nu apelează Stratul 2 înainte ca Straturile 0 + 1 să fi terminat cu succes.
+
+Stratul 2 calculează axa dominantă, grile periodice, bare transversale, poduri paralele, bețe ancorate, molecule geometrice, coridoare și rânduri aliniate. La final verifică dacă fiecare primitive_id din Stratul 1 apare exact o dată: fie într-o singură grilă, fie într-o singură moleculă. Duplicatele sau ID-urile necontabilizate opresc execuția.
+
+Produce trei imagini debug și un JSON separat *_geometry_layer2.json. În interfață, Pagina 3 rulează automat Straturile 0 + 1, validează rezultatul, apoi rulează Stratul 2. Sunt disponibile separat descărcarea JSON-ului Stratului 1 și a raportului Stratului 2.
+
+Comanda manuală pentru Stratul 2:
+python geometry_layer2.py debug_geo/poza_geometry_layer1.json --out-dir debug_l2
+
+Fotografia originală poate fi folosită numai ca fundal vizual al imaginilor debug; deciziile geometrice ale Stratului 2 sunt calculate din primitivele din JSON. Câmpul de calibrare pixeli/cm este ascuns pentru această pagină, deoarece scale înseamnă scalarea imaginii, nu calibrare fizică. Produce patru imagini de debug și un JSON cu sumar, primitive și joncțiuni.
 
 ## Utilizare
 
@@ -63,7 +84,7 @@ Pagina 3 rulează la rezoluția nativă cu scale=1.0. Câmpul de calibrare pixel
 2. Încarcă o fotografie PNG/JPG.
 3. Opțional, introdu calibrarea pixeli/cm pentru Paginile 1 și 2.
 4. Apasă butonul de rulare.
-5. Pe Pagina 3, inspectează cele patru imagini, tabelul primitivelor și verificările celor două straturi.
+5. Pe Pagina 3, inspectează cele șapte imagini, primitivele din Stratul 1 și rapoartele topologice din Stratul 2.
 6. Descarcă JSON-ul analizei respective.
 
 ## Linie de comandă
@@ -71,7 +92,8 @@ Pagina 3 rulează la rezoluția nativă cu scale=1.0. Câmpul de calibrare pixel
 \`\`\`bash
 python bete_engine.py fotografie.jpg --out-dir debug
 python bete_engine_page2.py fotografie.jpg --out-dir debug
-python bete_engine_page3.py fotografie.jpg --out-dir debug
+python bete_engine_page3.py fotografie.jpg --out-dir debug_geo
+python geometry_layer2.py debug_geo/fotografie_geometry_layer1.json --out-dir debug_l2
 \`\`\`
 
 Pentru Pagina 3 se poate seta opțional scalarea imaginii:
