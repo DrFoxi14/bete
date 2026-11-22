@@ -318,25 +318,56 @@ function renderPage3Table(primitives){
 function showPage3Proof(data){
  const box=document.getElementById("page3Proof");
  const v=data.lossless_verification||{};
+ const a=data.layer2?.accounting_verification||{};
  const layer0=Number(v.layer0_dss_xor_error_pixels)===0;
  const layer1=Boolean(v.guaranteed_100pct_coverage)&&Number(v.layer1_uncovered_ink_pixels)===0;
- const ok=layer0&&layer1;
+ const layer2=Boolean(a.guaranteed_100pct_accounting)&&Number(a.unaccounted_primitives)===0&&Number(a.duplicate_primitives)===0;
+ const ok=layer0&&layer1&&layer2;
  box.classList.remove("hidden");
  box.style.borderColor=ok?"#46633a":"#8b3e3e";
  box.innerHTML="";
  const heading=document.createElement("strong");
- heading.textContent=ok?"STRATUL 0: XOR = 0 · STRATUL 1: 0 pixeli neacoperiți":"VERIFICAREA CELOR DOUĂ STRATURI NU ESTE CONFIRMATĂ";
+ heading.textContent=ok?"STRATUL 0: XOR = 0 · STRATUL 1: 0 pixeli lipsă · STRATUL 2: 0 primitive lipsă":"VERIFICAREA CELOR TREI STRATURI NU ESTE CONFIRMATĂ";
  heading.style.color=ok?"#c7f09a":"#ff9999";
  const detail=document.createElement("div");
  detail.textContent=
-  "Pixeli în mască: "+fmt(v.ink_pixels,0)+
-  " · Segmente DSS: "+fmt(data.counts?.dss_segments,0)+
-  " · Erori XOR: "+fmt(v.layer0_dss_xor_error_pixels,0)+
-  " · Pixeli neacoperiți: "+fmt(v.layer1_uncovered_ink_pixels,0)+
-  " · Joncțiuni: "+fmt(data.counts?.junctions,0)+
-  " · Capete absorbite: "+fmt(v.absorbed_endcap_pixels,0);
+  "Stratul 0 — erori XOR: "+fmt(v.layer0_dss_xor_error_pixels,0)+
+  " · Stratul 1 — pixeli neacoperiți: "+fmt(v.layer1_uncovered_ink_pixels,0)+
+  " · Primitive Stratul 1: "+fmt(a.layer1_primitives_total,0)+
+  " · Grile: "+fmt(data.layer2?.counts?.periodic_grids,0)+
+  " · Molecule: "+fmt(data.layer2?.counts?.molecules_total,0)+
+  " · Primitive necontabilizate: "+fmt(a.unaccounted_primitives,0)+
+  " · Duplicate: "+fmt(a.duplicate_primitives,0);
  detail.style.marginTop="5px";
  box.append(heading,detail);
+}
+function renderLayer2Tables(layer2){
+ const host=document.getElementById("layer2Tables");host.replaceChildren();
+ const makeTable=(title,headers,rows)=>{
+  const section=document.createElement("div");section.className="section";
+  const heading=document.createElement("div");heading.className="section-heading";
+  const h=document.createElement("h3");h.textContent=title;heading.append(h);section.append(heading);
+  const wrap=document.createElement("div");wrap.className="table-wrap";
+  const t=document.createElement("table"),thead=document.createElement("thead"),trh=document.createElement("tr"),tbody=document.createElement("tbody");
+  headers.forEach(label=>{const th=document.createElement("th");th.textContent=label;trh.append(th);});
+  thead.append(trh);
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.className="empty";td.colSpan=headers.length;td.textContent="Niciun element detectat.";tr.append(td);tbody.append(tr);}
+  rows.forEach(values=>{const tr=document.createElement("tr");values.forEach(value=>{const td=document.createElement("td");td.textContent=String(value??"—");tr.append(td);});tbody.append(tr);});
+  t.append(thead,tbody);wrap.append(t);section.append(wrap);host.append(section);
+ };
+ const ids=v=>Array.isArray(v)?v.join(", "):"—";
+ makeTable("Grile periodice",["Grilă","Linii","Pas (px)","Unghi","Primitive"],
+  (layer2.periodic_grids||[]).map(g=>[g.grid_id,g.line_count,fmt(g.step_px,2),fmt(g.angle_deg,2)+"°",ids(g.primitive_ids)]));
+ makeTable("Molecule geometrice",["Moleculă","Tip","Zonă","Primitive","ID-uri primitive","Grile","Rând"],
+  (layer2.molecules||[]).map(m=>[m.molecule_id,m.type,m.zone,m.primitive_count,ids(m.primitive_ids),ids(m.grid_ids),m.row_id??"—"]));
+ makeTable("Bare transversale de grilă",["Moleculă","Primitivă","Grile intersectate","Lungime","Unghi"],
+  (layer2.transverse_grid_bars||[]).map(x=>[x.molecule_id,"#"+x.primitive_id,ids(x.spanned_grid_ids),fmt(x.length_px,2)+" px",fmt(x.angle_deg,2)+"°"]));
+ makeTable("Poduri paralele",["Moleculă","Pod","Benzi conectate","Zonă","Grile"],
+  (layer2.parallel_bridges||[]).map(x=>[x.molecule_id,"#"+x.bridge_id,ids(x.connected_parallel_ids),x.zone,ids(x.grid_ids)]));
+ makeTable("Bețe ancorate",["Moleculă","Băț","Lungime","Capăt A","Capăt B","Atașări mediane","Zonă"],
+  (layer2.anchored_sticks||[]).map(x=>[x.molecule_id,"#"+x.stick_id,fmt(x.length_px,2)+" px",ids(x.end_A_attachments),ids(x.end_B_attachments),ids(x.mid_attachments),x.zone]));
+ makeTable("Rânduri aliniate",["Rând","Molecule","ID-uri molecule","Primitive","Înălțime mediană"],
+  (layer2.aligned_rows||[]).map(x=>[x.row_id,x.molecule_count,ids(x.molecule_ids),ids(x.primitive_ids),fmt(x.median_height_px,2)+" px"]));
 }
 function showAnalysis(data,page){
  renderStats(data,page);renderImages(data,page);
