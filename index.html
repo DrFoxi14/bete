@@ -375,6 +375,15 @@ function showAnalysis(data,page){
  const size=data.image_size_px||data.preprocessing?.working_size_px||{width:"—",height:"—"};
  document.getElementById("runInfo").textContent=size.width+" × "+size.height+" px · "+data.engine+" · Run "+data.run_id.slice(0,8);
  document.getElementById("downloadJson").href=data.json_download_url;
+ const layer1Download=document.getElementById("downloadLayer1Json");
+ layer1Download.classList.toggle("hidden",page!=="3");
+ document.getElementById("layer2Section").classList.toggle("hidden",page!=="3");
+ if(page==="3"){
+  layer1Download.href=data.layer1_json_download_url;
+  document.getElementById("downloadJson").textContent="↓ JSON Stratul 2";
+ }else{
+  document.getElementById("downloadJson").textContent="↓ Descarcă JSON analiză";
+ }
  if(page==="1"){
   document.getElementById("tableTitle").textContent="Segmente detectate";
   document.getElementById("tableDescription").textContent="Fragmente păstrate și reunite după continuitatea geometrică.";
@@ -393,7 +402,17 @@ function showAnalysis(data,page){
   document.getElementById("debugDescription").textContent="Patru perspective: contururi DSS, tipuri geometrice, alungire și auditul acoperirii.";
   renderPage3Table(data.primitives);
   showPage3Proof(data);
-  document.getElementById("limitations").textContent="XOR = 0 certifică reconstrucția exactă a măștii binare. Zero pixeli neacoperiți certifică atribuirea tuturor pixelilor din acea mască unei primitive. Niciuna dintre verificări nu dovedește că binarizarea a capturat fiecare urmă din fotografia originală sau că tipul geometric coincide întotdeauna cu intenția de scriere.";
+  renderLayer2Tables(data.layer2||{});
+  const layer2Counts=data.layer2?.counts||{};
+  const layer2Stats=document.getElementById("layer2Stats");layer2Stats.replaceChildren();
+  layer2Stats.append(
+   makeStat(layer2Counts.periodic_grids||0,"Grile periodice",""),
+   makeStat(layer2Counts.molecules_total||0,"Molecule",""),
+   makeStat(layer2Counts.parallel_bridges||0,"Poduri paralele",""),
+   makeStat(layer2Counts.aligned_rows||0,"Rânduri aliniate","")
+  );
+  document.getElementById("layer2Section").classList.remove("hidden");
+  document.getElementById("limitations").textContent="Stratul 2 a primit numai JSON-ul produs de Straturile 0 + 1, după validarea XOR = 0 și a acoperirii integrale. Auditul din Stratul 2 verifică separat că fiecare primitivă apare exact o dată într-o grilă sau într-o moleculă. Aceste garanții privesc reprezentările geometrice calculate, nu perfecțiunea binarizării sau interpretarea semantică.";
  }
  resultsSection.classList.remove("hidden");
  resultsSection.scrollIntoView({behavior:"smooth",block:"start"});
