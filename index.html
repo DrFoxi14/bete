@@ -35,6 +35,7 @@
     .section-heading h2{margin:0;font-size:19px}.section-heading p{margin:3px 0 0;font-size:12px;color:var(--muted)}
     .secondary{display:inline-flex;align-items:center;justify-content:center;border:1px solid #425364;border-radius:10px;padding:9px 13px;color:var(--text);text-decoration:none;font-size:13px;font-weight:700;background:#1b2631}
     .secondary:hover{border-color:var(--accent)}
+    .download-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
     .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.stat{background:#121a22;border:1px solid var(--line);border-radius:13px;padding:14px 16px;min-width:0}
     .stat .value{font-size:25px;font-weight:800;letter-spacing:-.04em}.stat .label{color:var(--muted);font-size:12px}
     .stat.green .value{color:var(--green)}.stat.red .value{color:var(--red)}.stat.gray .value{color:var(--gray)}
@@ -102,7 +103,10 @@
   <section class="section hidden" id="results">
     <div class="section-heading">
       <div><h2 id="resultTitle">Rezultatul Paginii 1</h2><p id="runInfo"></p></div>
-      <a class="secondary" id="downloadJson" href="#" download>↓ Descarcă JSON</a>
+      <div class="download-actions">
+        <a class="secondary" id="downloadJson" href="#" download>↓ Descarcă JSON analiză</a>
+        <a class="secondary hidden" id="downloadLayer1Json" href="#" download>↓ JSON Stratul 1</a>
+      </div>
     </div>
     <div class="stats" id="stats"></div>
     <div class="page-explainer hidden" id="page3Proof"></div>
@@ -122,6 +126,12 @@
       </div>
       <div class="footnote" id="limitations"></div>
     </div>
+
+    <div class="section hidden" id="layer2Section">
+      <div class="section-heading"><div><h2>Stratul 2 · Topologie și organizare geometrică</h2><p>Rulează numai după validarea Straturilor 0 și 1. Conține analiza primitivelor validate.</p></div></div>
+      <div class="stats" id="layer2Stats"></div>
+      <div id="layer2Tables"></div>
+    </div>
   </section>
 </main>
 
@@ -138,7 +148,7 @@ let selectedFile=null,previewUrl=null,selectedPage="1";
 const pageDescriptions={
  "1":"<strong>Pagina 1:</strong> extracție nedistructivă. Păstrează fiecare braț liniar; nu aplică reguli F/T/X/L și nu elimină bețe după lungime sau grosime. De exemplu, F = trei bețe, f = bățul mare plus bara mică, iar π = trei brațe.",
  "2":"<strong>Pagina 2:</strong> folosește <code>bete_engine_page2.py</code>, copia exactă a codului v3 atașat. Include extracția în Faza 1 și clasificarea relațională în Faza 2.",
- "3":"<strong>Pagina 3:</strong> geometrie pură în două straturi. Stratul 0 descompune contururile în DSS și verifică reconstrucția XOR. Stratul 1 atribuie cerneala din mască benzilor drepte, benzilor curbe, petelor compacte și joncțiunilor."
+ "3":"<strong>Pagina 3:</strong> trei etape secvențiale. Stratul 0 reconstruiește exact masca prin DSS; Stratul 1 partiționează cerneala în primitive; Stratul 2 pornește numai după validarea ambelor straturi și analizează grile, molecule, bare, poduri, ancore și rânduri."
 };
 function setStatus(message,kind){
  statusBox.textContent=message;statusBox.className="status "+(kind||"");
