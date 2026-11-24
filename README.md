@@ -71,7 +71,7 @@ Dacă oricare condiție nu este îndeplinită, geometry_layer2.py oprește execu
 
 Stratul 2 calculează axa dominantă, grile periodice, bare transversale, poduri paralele, bețe ancorate, molecule geometrice, coridoare și rânduri aliniate. La final verifică dacă fiecare primitive_id din Stratul 1 apare exact o dată: fie într-o singură grilă, fie într-o singură moleculă. Duplicatele sau ID-urile necontabilizate opresc execuția.
 
-Produce trei imagini debug și un JSON separat *_geometry_layer2.json. În interfață, Pagina 3 rulează automat Straturile 0 + 1, validează rezultatul, apoi rulează Stratul 2. Sunt disponibile separat descărcarea JSON-ului Stratului 1 și a raportului Stratului 2.
+Produce trei imagini debug și un JSON separat *_geometry_layer2.json. În interfață, Pagina 3 rulează automat Straturile 0 + 1, validează rezultatul, apoi rulează Stratul 2 și Geometry Layer 3A v5.1. Stratul 3A primește exclusiv JSON-urile validate ale Straturilor 1 și 2 și execută verificările stricte de metrică locală, graf de contacte/proximități și audit count == 1. Sunt disponibile separat descărcarea JSON-urilor Straturilor 1, 2 și 3A. Motorul local este `geometry_layer3a_v51.py`.
 
 Comanda manuală pentru Stratul 2:
 python geometry_layer2.py debug_geo/poza_geometry_layer1.json --out-dir debug_l2
