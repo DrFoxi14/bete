@@ -18,6 +18,7 @@ from bete_engine import process_image as process_image_page1
 from bete_engine_page2 import process_image as process_image_page2
 from bete_engine_page3 import process_image as process_image_page3
 from geometry_layer2 import process_layer1_json
+from geometry_layer3a_v51 import process_layer3a
 
 ROOT = Path(__file__).resolve().parent
 WEB_FILE = ROOT / "index.html"
@@ -40,6 +41,9 @@ DEBUG_FILES = {
     "debug_l2_1_grile_si_bare.png",
     "debug_l2_2_poduri_si_ancore.png",
     "debug_l2_3_coridoare_si_siruri.png",
+    "debug_l3a_1_grid_metric_support.png",
+    "debug_l3a_2_contacts_geometry.png",
+    "debug_l3a_3_accounting_zones.png",
 }
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -69,7 +73,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_bytes(200, WEB_FILE.read_bytes(), "text/html; charset=utf-8")
             return
         if parsed.path == "/api/health":
-            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py", "3": "bete_engine_page3.py + geometry_layer2.py"}})
+            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py", "3": "Straturile 0 + 1 + 2 + Geometry Layer 3A v5.1"}})
             return
         if parsed.path.startswith("/api/files/"):
             self._serve_file(parsed.path)
@@ -86,7 +90,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Adresă invalidă."})
             return
         allowed_input = filename in {"input.png", "input.jpg", "input.jpeg"}
-        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json", "input_dss_lossless.json", "input_geometry_layer1.json", "input_geometry_layer2.json"}
+        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json", "input_dss_lossless.json", "input_geometry_layer1.json", "input_geometry_layer2.json", "input_geometry_layer3a.json"}
         if filename not in DEBUG_FILES and not allowed_input and not allowed_json:
             self._send_json(403, {"error": "Fișierul nu este expus de server."})
             return
@@ -211,9 +215,44 @@ class BeteHandler(BaseHTTPRequestHandler):
                     Path(name).stem: "/api/files/" + run_id + "/" + Path(name).name
                     for name in layer2_result["debug_images"].values()
                 }
+                layer2_json_path = Path(layer2_result.get("json_file", "")).resolve()
+                if layer2_json_path.parent != run_dir.resolve() or layer2_json_path.name != "input_geometry_layer2.json":
+                    raise RuntimeError("Stratul 2 a produs un JSON în afara execuției curente.")
+
+                # Stratul 3A v5.1 primește exclusiv JSON-urile validate ale Straturilor 1 și 2.
+                layer3a_result = process_layer3a(
+                    full_result_path, layer2_json_path, run_dir, image_override=str(input_path)
+                )
+                layer3a_json_path = Path(layer3a_result.get("json_file", "")).resolve()
+                if layer3a_json_path.parent != run_dir.resolve() or layer3a_json_path.name != "input_geometry_layer3a.json":
+                    raise RuntimeError("Stratul 3A a produs un JSON în afara execuției curente.")
+                audit3a = layer3a_result.get("audit_verification", {})
+                if (audit3a.get("guaranteed_exact_once_accounting") is not True
+                        or int(audit3a.get("missing_primitives", -1)) != 0
+                        or int(audit3a.get("duplicate_primitive_assignments", -1)) != 0
+                        or int(audit3a.get("missing_molecules", -1)) != 0
+                        or int(audit3a.get("duplicate_molecule_assignments", -1)) != 0):
+                    raise RuntimeError("Stratul 3A nu a confirmat auditul strict count == 1.")
+
+                result["layer3a"] = {
+                    "schema_version": layer3a_result.get("schema_version"),
+                    "upstream_gates": layer3a_result.get("upstream_gates", {}),
+                    "audit_verification": audit3a,
+                    "totals": layer3a_result.get("totals", {}),
+                    "grids": [{
+                        "grid_id": grid.get("grid_id"),
+                        "metrics": grid.get("metrics", {}),
+                        "counts": grid.get("counts", {}),
+                    } for grid in layer3a_result.get("grids", [])],
+                }
+                result["layer3a_debug_images"] = {
+                    Path(name).stem: "/api/files/" + run_id + "/" + Path(name).name
+                    for name in layer3a_result.get("debug_images", {}).values()
+                }
                 result["layer1_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer1.json"
                 result["layer2_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer2.json"
-                json_name = "input_geometry_layer2.json"
+                result["layer3a_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer3a.json"
+                json_name = "input_geometry_layer3a.json"
         except Exception as exc:
             self._send_json(422, {"error": "Analiza a eșuat: " + str(exc)[:500]})
             return
