@@ -182,7 +182,7 @@ class BeteHandler(BaseHTTPRequestHandler):
                     "debug_4_verificare_100pct.png",
                 ]
                 json_name = "input_geometry_layer1.json"
-                engine_name = "bete_engine_page3.py + geometry_layer2.py"
+                engine_name = "bete_engine_page3.py + geometry_layer2.py + geometry_layer3a_v51.py"
                 # API-ul motorului întoarce sumarul; încărcăm primitivele/joncțiunile
                 # din JSON-ul complet generat în același director al execuției.
                 full_result_path = Path(result["json_file"]).resolve()
