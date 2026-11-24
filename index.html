@@ -106,6 +106,8 @@
       <div class="download-actions">
         <a class="secondary" id="downloadJson" href="#" download>↓ Descarcă JSON analiză</a>
         <a class="secondary hidden" id="downloadLayer1Json" href="#" download>↓ JSON Stratul 1</a>
+        <a class="secondary hidden" id="downloadLayer2Json" href="#" download>↓ JSON Stratul 2</a>
+        <a class="secondary hidden" id="downloadLayer3aJson" href="#" download>↓ JSON Stratul 3A</a>
       </div>
     </div>
     <div class="stats" id="stats"></div>
@@ -132,6 +134,15 @@
       <div class="stats" id="layer2Stats"></div>
       <div id="layer2Tables"></div>
     </div>
+
+    <div class="section hidden" id="layer3aSection">
+      <div class="section-heading"><div><h2>Geometry Layer 3A v5.1 · Metrică locală și graf spațial</h2><p>Primește numai JSON-urile validate ale Straturilor 1 și 2. Include partiția celulelor, relațiile geometrice și auditul strict.</p></div></div>
+      <div class="stats" id="layer3aStats"></div>
+      <div class="page-explainer" id="layer3aAudit"></div>
+      <div class="table-wrap">
+        <table><thead id="layer3aGridHead"></thead><tbody id="layer3aGridBody"><tr><td class="empty">Nu există grile.</td></tr></tbody></table>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -148,7 +159,7 @@ let selectedFile=null,previewUrl=null,selectedPage="1";
 const pageDescriptions={
  "1":"<strong>Pagina 1:</strong> extracție nedistructivă. Păstrează fiecare braț liniar; nu aplică reguli F/T/X/L și nu elimină bețe după lungime sau grosime. De exemplu, F = trei bețe, f = bățul mare plus bara mică, iar π = trei brațe.",
  "2":"<strong>Pagina 2:</strong> folosește <code>bete_engine_page2.py</code>, copia exactă a codului v3 atașat. Include extracția în Faza 1 și clasificarea relațională în Faza 2.",
- "3":"<strong>Pagina 3:</strong> trei etape secvențiale. Stratul 0 reconstruiește exact masca prin DSS; Stratul 1 partiționează cerneala în primitive; Stratul 2 pornește numai după validarea ambelor straturi și analizează grile, molecule, bare, poduri, ancore și rânduri."
+ "3":"<strong>Pagina 3:</strong> patru etape secvențiale. Stratul 0 reconstruiește masca prin DSS; Stratul 1 o partiționează în primitive; Stratul 2 analizează topologia; Geometry Layer 3A v5.1 construiește metrica locală a grilelor, grafurile de contacte și proximități și execută auditul strict count == 1.",
 };
 function setStatus(message,kind){
  statusBox.textContent=message;statusBox.className="status "+(kind||"");
@@ -236,6 +247,9 @@ function renderImages(data,page){
   ["debug_l2_1_grile_si_bare","05 · Grile și bare","grile periodice și bare transversale · Stratul 2"],
   ["debug_l2_2_poduri_si_ancore","06 · Poduri și ancore","relații între benzi și capete ancorate · Stratul 2"],
   ["debug_l2_3_coridoare_si_siruri","07 · Coridoare și rânduri","molecule și aliniamente · Stratul 2"]
+   ["debug_l3a_1_grid_metric_support","08 · Metrică și suport de grilă","linii, pas local și celule · Stratul 3A"],
+   ["debug_l3a_2_contacts_geometry","09 · Contacte geometrice","intersecții, suprapuneri și proximități · Stratul 3A"],
+   ["debug_l3a_3_accounting_zones","10 · Zone și contabilizare","rolul fiecărei primitive · Stratul 3A"]
  ];
  for(const [key,title,subtitle] of entries){
   const card=document.createElement("article");card.className="image-card"+(entries.length===3&&((key==="debug_3_rezultat")||(key==="debug_3_verificare_xor"))?" wide":"");
@@ -243,7 +257,7 @@ function renderImages(data,page){
   const strong=document.createElement("strong");strong.textContent=title;
   const small=document.createElement("small");small.textContent=subtitle;
   label.append(strong,small);
-  const img=document.createElement("img");img.alt=title;img.loading="lazy";img.src=(data.debug_images||{})[key]||(data.layer2_debug_images||{})[key]||"";
+  const img=document.createElement("img");img.alt=title;img.loading="lazy";img.src=(data.debug_images||{})[key]||(data.layer2_debug_images||{})[key]||(data.layer3a_debug_images||{})[key]||"";
   card.append(label,img);container.append(card);
  }
 }
@@ -319,27 +333,19 @@ function showPage3Proof(data){
  const box=document.getElementById("page3Proof");
  const v=data.lossless_verification||{};
  const a=data.layer2?.accounting_verification||{};
+ const b=data.layer3a?.audit_verification||{};
  const layer0=Number(v.layer0_dss_xor_error_pixels)===0;
  const layer1=Boolean(v.guaranteed_100pct_coverage)&&Number(v.layer1_uncovered_ink_pixels)===0;
  const layer2=Boolean(a.guaranteed_100pct_accounting)&&Number(a.unaccounted_primitives)===0&&Number(a.duplicate_primitives)===0;
- const ok=layer0&&layer1&&layer2;
- box.classList.remove("hidden");
- box.style.borderColor=ok?"#46633a":"#8b3e3e";
- box.innerHTML="";
+ const layer3a=b.guaranteed_exact_once_accounting===true&&Number(b.missing_primitives)===0&&Number(b.duplicate_primitive_assignments)===0&&Number(b.missing_molecules)===0&&Number(b.duplicate_molecule_assignments)===0;
+ const ok=layer0&&layer1&&layer2&&layer3a;
+ box.classList.remove("hidden");box.style.borderColor=ok?"#46633a":"#8b3e3e";box.innerHTML="";
  const heading=document.createElement("strong");
- heading.textContent=ok?"STRATUL 0: XOR = 0 · STRATUL 1: 0 pixeli lipsă · STRATUL 2: 0 primitive lipsă":"VERIFICAREA CELOR TREI STRATURI NU ESTE CONFIRMATĂ";
+ heading.textContent=ok?"STRATUL 0: XOR = 0 · STRATUL 1: acoperire 100% · STRATUL 2: contabilitate completă · STRATUL 3A: audit count == 1":"VERIFICAREA UNUIA SAU MAI MULTOR STRATURI NU ESTE CONFIRMATĂ";
  heading.style.color=ok?"#c7f09a":"#ff9999";
  const detail=document.createElement("div");
- detail.textContent=
-  "Stratul 0 — erori XOR: "+fmt(v.layer0_dss_xor_error_pixels,0)+
-  " · Stratul 1 — pixeli neacoperiți: "+fmt(v.layer1_uncovered_ink_pixels,0)+
-  " · Primitive Stratul 1: "+fmt(a.layer1_primitives_total,0)+
-  " · Grile: "+fmt(data.layer2?.counts?.periodic_grids,0)+
-  " · Molecule: "+fmt(data.layer2?.counts?.molecules_total,0)+
-  " · Primitive necontabilizate: "+fmt(a.unaccounted_primitives,0)+
-  " · Duplicate: "+fmt(a.duplicate_primitives,0);
- detail.style.marginTop="5px";
- box.append(heading,detail);
+ detail.textContent="Stratul 0 — erori XOR: "+fmt(v.layer0_dss_xor_error_pixels,0)+" · Stratul 1 — pixeli neacoperiți: "+fmt(v.layer1_uncovered_ink_pixels,0)+" · Primitive: "+fmt(b.primitives_assigned_exactly_once,0)+" / "+fmt(b.total_primitives_expected,0)+" · Molecule: "+fmt(b.molecules_audited_exactly_once,0)+" / "+fmt(b.total_molecules_expected,0)+" · Duplicate primitive / molecule: "+fmt(b.duplicate_primitive_assignments,0)+" / "+fmt(b.duplicate_molecule_assignments,0);
+ detail.style.marginTop="5px";box.append(heading,detail);
 }
 function renderLayer2Tables(layer2){
  const host=document.getElementById("layer2Tables");host.replaceChildren();
@@ -369,6 +375,21 @@ function renderLayer2Tables(layer2){
  makeTable("Rânduri aliniate",["Rând","Molecule","ID-uri molecule","Primitive","Înălțime mediană"],
   (layer2.aligned_rows||[]).map(x=>[x.row_id,x.molecule_count,ids(x.molecule_ids),ids(x.primitive_ids),fmt(x.median_height_px,2)+" px"]));
 }
+function renderLayer3A(layer3a){
+ const totals=layer3a.totals||{},audit=layer3a.audit_verification||{};
+ const stats=document.getElementById("layer3aStats");stats.replaceChildren();
+ stats.append(makeStat(totals.systems??0,"Sisteme geometrice",""),makeStat(totals.grids??0,"Grile cu metrică locală",""),makeStat(totals.cells??0,"Celule contigue",""),makeStat(totals.direct_contacts??0,"Contacte directe",""));
+ const auditBox=document.getElementById("layer3aAudit");
+ const auditOk=audit.guaranteed_exact_once_accounting===true&&Number(audit.missing_primitives)===0&&Number(audit.duplicate_primitive_assignments)===0&&Number(audit.missing_molecules)===0&&Number(audit.duplicate_molecule_assignments)===0;
+ auditBox.style.borderColor=auditOk?"#46633a":"#8b3e3e";
+ auditBox.textContent=(auditOk?"AUDIT STRICT CONFIRMAT · COUNT == 1":"AUDIT STRICT NECONFIRMAT")+" · Primitive: "+fmt(audit.primitives_assigned_exactly_once,0)+" / "+fmt(audit.total_primitives_expected,0)+" · Lipsă: "+fmt(audit.missing_primitives,0)+" · Duplicate: "+fmt(audit.duplicate_primitive_assignments,0)+" · Molecule: "+fmt(audit.molecules_audited_exactly_once,0)+" / "+fmt(audit.total_molecules_expected,0)+" · Molecule lipsă / duplicate: "+fmt(audit.missing_molecules,0)+" / "+fmt(audit.duplicate_molecule_assignments,0);
+ const head=document.getElementById("layer3aGridHead");head.replaceChildren();const body=document.getElementById("layer3aGridBody");body.replaceChildren();
+ const headers=["Grilă","Linii","Pas local (px)","Domeniu u (px)","Sănătate geometrică","Ordine validă","Celule","Contacte","Proximități"];
+ const hrow=document.createElement("tr");headers.forEach(label=>{const th=document.createElement("th");th.textContent=label;hrow.append(th);});head.append(hrow);
+ const grids=layer3a.grids||[];if(!grids.length){const row=document.createElement("tr"),cell=document.createElement("td");cell.className="empty";cell.colSpan=headers.length;cell.textContent="Nu a fost detectată nicio grilă periodică pentru modelul metric local.";row.append(cell);body.append(row);}
+ for(const grid of grids){const m=grid.metrics||{},c=grid.counts||{},row=document.createElement("tr");const span=Array.isArray(m.u_span)?m.u_span.map(v=>fmt(v,1)).join(" → "):"—";const values=[grid.grid_id,m.line_count,fmt(m.spacing_px,2),span,m.geometry_health,m.domain_order_valid===true?"da":m.domain_order_valid===false?"nu":"—",c.cells,c.direct_contacts,c.spatial_proximities];values.forEach(value=>{const td=document.createElement("td");td.textContent=String(value??"—");row.append(td);});body.append(row);}
+}
+
 function showAnalysis(data,page){
  renderStats(data,page);renderImages(data,page);
  document.getElementById("resultTitle").textContent="Rezultatul Paginii "+page;
@@ -376,11 +397,13 @@ function showAnalysis(data,page){
  document.getElementById("runInfo").textContent=size.width+" × "+size.height+" px · "+data.engine+" · Run "+data.run_id.slice(0,8);
  document.getElementById("downloadJson").href=data.json_download_url;
  const layer1Download=document.getElementById("downloadLayer1Json");
- layer1Download.classList.toggle("hidden",page!=="3");
- document.getElementById("layer2Section").classList.toggle("hidden",page!=="3");
+ const layer2Download=document.getElementById("downloadLayer2Json");
+ const layer3aDownload=document.getElementById("downloadLayer3aJson");
+ layer1Download.classList.toggle("hidden",page!=="3");layer2Download.classList.toggle("hidden",page!=="3");layer3aDownload.classList.toggle("hidden",page!=="3");
+ document.getElementById("layer2Section").classList.toggle("hidden",page!=="3");document.getElementById("layer3aSection").classList.toggle("hidden",page!=="3");
  if(page==="3"){
-  layer1Download.href=data.layer1_json_download_url;
-  document.getElementById("downloadJson").textContent="↓ JSON Stratul 2";
+  layer1Download.href=data.layer1_json_download_url;layer2Download.href=data.layer2_json_download_url;layer3aDownload.href=data.layer3a_json_download_url;
+  document.getElementById("downloadJson").textContent="↓ JSON Stratul 3A";
  }else{
   document.getElementById("downloadJson").textContent="↓ Descarcă JSON analiză";
  }
@@ -399,7 +422,7 @@ function showAnalysis(data,page){
  }else{
   document.getElementById("tableTitle").textContent="Partiția în primitive geometrice";
   document.getElementById("tableDescription").textContent="Fiecare rând descrie o bandă dreaptă, o bandă curbă sau o pată compactă; vecinii indică relațiile dintre primitive.";
-  document.getElementById("debugDescription").textContent="Patru imagini pentru Straturile 0 + 1 și trei imagini topologice pentru Stratul 2.";
+  document.getElementById("debugDescription").textContent="Patru imagini pentru Straturile 0 + 1, trei pentru Stratul 2 și trei diagnostice geometrice pentru Stratul 3A v5.1.";
   renderPage3Table(data.primitives);
   showPage3Proof(data);
   renderLayer2Tables(data.layer2||{});
@@ -412,7 +435,8 @@ function showAnalysis(data,page){
    makeStat(layer2Counts.aligned_rows||0,"Rânduri aliniate","")
   );
   document.getElementById("layer2Section").classList.remove("hidden");
-  document.getElementById("limitations").textContent="Stratul 2 a primit numai JSON-ul produs de Straturile 0 + 1, după validarea XOR = 0 și a acoperirii integrale. Auditul din Stratul 2 verifică separat că fiecare primitivă apare exact o dată într-o grilă sau într-o moleculă. Aceste garanții privesc reprezentările geometrice calculate, nu perfecțiunea binarizării sau interpretarea semantică.";
+  renderLayer3A(data.layer3a||{});document.getElementById("layer3aSection").classList.remove("hidden");
+  document.getElementById("limitations").textContent="Stratul 3A v5.1 a primit exclusiv JSON-urile validate ale Straturilor 1 și 2. Verifică metricile locale, continuitatea celulelor, contactele și proximitățile geometrice și contabilizarea strictă count == 1 pentru primitive și molecule. Aceste garanții privesc modelul geometric calculat, nu perfecțiunea binarizării sau interpretarea semantică.";
  }
  resultsSection.classList.remove("hidden");
  resultsSection.scrollIntoView({behavior:"smooth",block:"start"});
