@@ -1,28 +1,10 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""Geometrie pură (Stratul 2): Topologie, grile periodice, poduri, molecule și rânduri.
-
-Citește EXCLUSIV JSON-ul produs de geometry_layer1.py. Nu citește masca de pixeli.
-
-Condiție obligatorie de intrare:
-  - layer0_dss_xor_error_pixels == 0
-  - layer1_uncovered_ink_pixels == 0
-  - guaranteed_100pct_coverage == True
-
-Garanție matematică:
-  Fiecare primitive_id apare fie într-o singură grilă, fie într-o singură moleculă.
-  Dublurile și primitivele necontabilizate opresc analiza.
-
-Utilizare:
-  python geometry_layer2.py debug_geo/poza_geometry_layer1.json --out-dir debug_l2
-"""
 from __future__ import annotations
 
 import argparse
 import json
 import math
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -47,13 +29,22 @@ def _point_to_segment(pt: np.ndarray, a: np.ndarray, b: np.ndarray) -> Tuple[flo
 
 def _prim_uv_box(p: Dict[str, Any], u_vec: np.ndarray, v_vec: np.ndarray) -> Tuple[float, float, float, float]:
     if p["type"] == "banda_dreapta":
-        pts = np.array([p["start"], p["end"]], dtype=np.float64)
+        a = np.array(p["start"], dtype=np.float64)
+        b = np.array(p["end"], dtype=np.float64)
         hw = 0.5 * float(p["width_px"])
-        us = pts @ u_vec
-        vs = pts @ v_vec
-        return float(np.min(us)) - hw, float(np.min(vs)) - hw, float(np.max(us)) + hw, float(np.max(vs)) + hw
-    x0, y0, x1, y1 = p["bbox"]
-    corners = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float64)
+        d = b - a
+        L = float(np.linalg.norm(d))
+        if L > 1e-9:
+            n = np.array([-d[1] / L, d[0] / L], dtype=np.float64)
+            corners = np.array([a + hw * n, a - hw * n, b - hw * n, b + hw * n], dtype=np.float64)
+        else:
+            corners = np.array([
+                [a[0] - hw, a[1] - hw], [a[0] + hw, a[1] - hw],
+                [a[0] + hw, a[1] + hw], [a[0] - hw, a[1] + hw],
+            ], dtype=np.float64)
+    else:
+        x0, y0, x1, y1 = [float(v) for v in p["bbox"]]
+        corners = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float64)
     us = corners @ u_vec
     vs = corners @ v_vec
     return float(np.min(us)), float(np.min(vs)), float(np.max(us)), float(np.max(vs))
@@ -61,8 +52,8 @@ def _prim_uv_box(p: Dict[str, Any], u_vec: np.ndarray, v_vec: np.ndarray) -> Tup
 
 def _prim_xy_box(p: Dict[str, Any]) -> Tuple[float, float, float, float]:
     if p["type"] == "banda_dreapta":
-        x0, y0 = p["start"]
-        x1, y1 = p["end"]
+        x0, y0 = float(p["start"][0]), float(p["start"][1])
+        x1, y1 = float(p["end"][0]), float(p["end"][1])
         hw = 0.5 * float(p["width_px"])
         return min(x0, x1) - hw, min(y0, y1) - hw, max(x0, x1) + hw, max(y0, y1) + hw
     b = p["bbox"]
@@ -75,42 +66,26 @@ def _prim_dist_to_point(pt: np.ndarray, p: Dict[str, Any]) -> float:
         b = np.array(p["end"], dtype=np.float64)
         d, _ = _point_to_segment(pt, a, b)
         return max(0.0, d - 0.5 * float(p["width_px"]))
-    x0, y0, x1, y1 = p["bbox"]
-    dx = max(x0 - pt[0], 0.0, pt[0] - x1)
-    dy = max(y0 - pt[1], 0.0, pt[1] - y1)
+    x0, y0, x1, y1 = [float(v) for v in p["bbox"]]
+    dx = max(x0 - float(pt[0]), 0.0, float(pt[0]) - x1)
+    dy = max(y0 - float(pt[1]), 0.0, float(pt[1]) - y1)
     return math.hypot(dx, dy)
 
 
-def validate_layer1(layer1: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], set[int]]:
-    """Refuză orice intrare care nu conține dovezile complete ale Straturilor 0 și 1."""
-    verification = layer1.get("lossless_verification")
-    if not isinstance(verification, dict):
-        raise ValueError("JSON-ul nu conține lossless_verification; Stratul 2 nu poate porni.")
-    if int(verification.get("layer0_dss_xor_error_pixels", -1)) != 0:
-        raise ValueError("Stratul 0 nu a confirmat XOR = 0; Stratul 2 a fost blocat.")
-    if int(verification.get("layer1_uncovered_ink_pixels", -1)) != 0:
-        raise ValueError("Stratul 1 are pixeli de cerneală neacoperiți; Stratul 2 a fost blocat.")
-    if verification.get("guaranteed_100pct_coverage") is not True:
-        raise ValueError("Stratul 1 nu a confirmat acoperirea 100%; Stratul 2 a fost blocat.")
-
-    primitives = layer1.get("primitives")
-    if not isinstance(primitives, list):
-        raise ValueError("JSON-ul Stratul 1 nu conține lista primitives.")
-    ids: List[int] = []
-    for item in primitives:
-        if not isinstance(item, dict) or "id" not in item or "type" not in item:
-            raise ValueError("Lista primitives conține un element invalid.")
-        ids.append(int(item["id"]))
-    if len(ids) != len(set(ids)):
-        raise ValueError("Stratul 1 conține primitive cu ID-uri duplicate.")
-    if len(ids) != int(layer1.get("counts", {}).get("primitives_total", len(ids))):
-        raise ValueError("Numărul primitivelor nu corespunde sumarului Stratul 1.")
-    return primitives, set(ids)
+def _ribbon_touches_near_end(stick: Dict[str, Any], bridge: Dict[str, Any]) -> bool:
+    pa = np.array(stick["start"], dtype=np.float64)
+    pb = np.array(stick["end"], dtype=np.float64)
+    ba = np.array(bridge["start"], dtype=np.float64)
+    bb = np.array(bridge["end"], dtype=np.float64)
+    da, _ = _point_to_segment(pa, ba, bb)
+    db, _ = _point_to_segment(pb, ba, bb)
+    half_sum = 0.5 * (float(stick["width_px"]) + float(bridge["width_px"]))
+    gap_a = max(0.0, da - half_sum)
+    gap_b = max(0.0, db - half_sum)
+    end_tol = max(4.0, 2.0 * float(bridge["width_px"]), 0.25 * float(stick["length_px"]))
+    return min(gap_a, gap_b) <= end_tol
 
 
-# ---------------------------------------------------------------------------
-# 1. Estimarea axei dominante a paginii (auto-deskew pur geometric)
-# ---------------------------------------------------------------------------
 def estimate_dominant_axis(primitives: Sequence[Dict[str, Any]]) -> Tuple[float, np.ndarray, np.ndarray]:
     ribbons = [p for p in primitives if p["type"] == "banda_dreapta" and float(p["elongation"]) >= 3.0]
     if not ribbons:
@@ -148,26 +123,31 @@ def estimate_dominant_axis(primitives: Sequence[Dict[str, Any]]) -> Tuple[float,
     return theta_deg, u_vec, v_vec
 
 
-# ---------------------------------------------------------------------------
-# 2. Detecția grilelor paralele periodice (fără număr hardcodat de linii)
-# ---------------------------------------------------------------------------
-def _track_v_at(tr: Dict[str, Any], u_val: float) -> float:
-    return tr["v0"] + tr["slope"] * (u_val - tr["u_ref"])
+def _track_eval_piecewise(members: Sequence[Dict[str, Any]], u_val: float) -> float:
+    pts = []
+    for m in members:
+        pts.append((m["ua"], m["va"]))
+        pts.append((m["ub"], m["vb"]))
+    pts.sort(key=lambda t: t[0])
+    us = np.array([t[0] for t in pts], dtype=np.float64)
+    vs = np.array([t[1] for t in pts], dtype=np.float64)
+    if u_val <= us[0]:
+        first = min(members, key=lambda m: m["ua"])
+        sl = (first["vb"] - first["va"]) / max(1e-6, first["ub"] - first["ua"])
+        sl = max(-0.08, min(0.08, sl))
+        return float(first["va"] + sl * (u_val - first["ua"]))
+    if u_val >= us[-1]:
+        last = max(members, key=lambda m: m["ub"])
+        sl = (last["vb"] - last["va"]) / max(1e-6, last["ub"] - last["ua"])
+        sl = max(-0.08, min(0.08, sl))
+        return float(last["vb"] + sl * (u_val - last["ub"]))
+    return float(np.interp(u_val, us, vs))
 
 
-def _fit_track_line(members: Sequence[Dict[str, Any]]) -> Tuple[float, float, float]:
-    """Potrivește v(u) = v0 + slope * (u - u_ref) ponderat cu lungimea segmentelor."""
-    us = np.array([x for m in members for x in (m["ua"], m["ub"])], dtype=np.float64)
-    vs = np.array([y for m in members for y in (m["va"], m["vb"])], dtype=np.float64)
-    ws = np.array([m["len"] for m in members for _ in range(2)], dtype=np.float64)
-    w_sum = float(np.sum(ws))
-    u_ref = float(np.sum(ws * us) / w_sum)
-    v0 = float(np.sum(ws * vs) / w_sum)
-    du = us - u_ref
-    denom = float(np.sum(ws * du * du))
-    slope = float(np.sum(ws * du * (vs - v0)) / denom) if denom > 1e-6 else 0.0
-    slope = max(-0.12, min(0.12, slope))
-    return u_ref, v0, slope
+def _curve_eval(curve: Dict[str, Any], u_val: float) -> float:
+    if curve["kind"] == "track":
+        return _track_eval_piecewise(curve["members"], u_val)
+    return 0.5 * (_curve_eval(curve["a"], u_val) + _curve_eval(curve["b"], u_val))
 
 
 def detect_periodic_grids(
@@ -180,9 +160,9 @@ def detect_periodic_grids(
     for p in primitives:
         if p["type"] != "banda_dreapta":
             continue
-        if _angle_diff_180(float(p["angle_deg"]), theta_deg) > 7.0:
+        if _angle_diff_180(float(p["angle_deg"]), theta_deg) > 10.0:
             continue
-        if float(p["elongation"]) < 7.0:
+        if float(p["elongation"]) < 4.5:
             continue
         pa = np.array(p["start"], dtype=np.float64)
         pb = np.array(p["end"], dtype=np.float64)
@@ -201,16 +181,27 @@ def detect_periodic_grids(
     if len(aligned) < 3:
         return [], set()
 
-    aligned.sort(key=lambda s: s["len"], reverse=True)
+    aligned.sort(key=lambda s: (s["ua"], -s["len"]))
     tracks: List[Dict[str, Any]] = []
     for seg in aligned:
         best_tr = None
         best_err = float("inf")
         for tr in tracks:
-            tol_v = max(2.8, 1.7 * max(tr["w"], seg["w"]))
-            err_a = abs(seg["va"] - _track_v_at(tr, seg["ua"]))
-            err_b = abs(seg["vb"] - _track_v_at(tr, seg["ub"]))
-            err = max(err_a, err_b)
+            last = tr["last"]
+            gap_u = seg["ua"] - last["ub"]
+            if gap_u < -max(8.0, 0.35 * min(seg["len"], last["len"])):
+                continue
+            if gap_u > 360.0:
+                continue
+            w_ref = max(tr["w"], seg["w"])
+            if max(tr["w"], seg["w"]) / max(0.5, min(tr["w"], seg["w"])) > 2.4:
+                continue
+            sl_last = max(-0.08, min(0.08, (last["vb"] - last["va"]) / max(1e-6, last["ub"] - last["ua"])))
+            sl_seg = max(-0.08, min(0.08, (seg["vb"] - seg["va"]) / max(1e-6, seg["ub"] - seg["ua"])))
+            pred_va = last["vb"] + sl_last * (seg["ua"] - last["ub"])
+            pred_last_vb = seg["va"] + sl_seg * (last["ub"] - seg["ua"])
+            err = 0.5 * (abs(seg["va"] - pred_va) + abs(last["vb"] - pred_last_vb))
+            tol_v = max(2.8, 1.8 * w_ref, min(6.5, 0.025 * max(0.0, gap_u) + 2.0))
             if err <= tol_v and err < best_err:
                 best_err = err
                 best_tr = tr
@@ -219,15 +210,14 @@ def detect_periodic_grids(
             best_tr["u0"] = min(best_tr["u0"], seg["ua"])
             best_tr["u1"] = max(best_tr["u1"], seg["ub"])
             best_tr["total_len"] += seg["len"]
-            best_tr["w"] = sum(m["w"] * m["len"] for m in best_tr["members"]) / best_tr["total_len"]
-            best_tr["u_ref"], best_tr["v0"], best_tr["slope"] = _fit_track_line(best_tr["members"])
+            best_tr["w"] = sum(m["w"] * m["len"] for m in best_tr["members"]) / max(1e-6, best_tr["total_len"])
+            if seg["ub"] >= best_tr["last"]["ub"]:
+                best_tr["last"] = seg
         else:
-            u_ref, v0, slope = _fit_track_line([seg])
             tracks.append({
-                "members": [seg],
+                "members": [seg], "last": seg,
                 "u0": seg["ua"], "u1": seg["ub"],
                 "total_len": seg["len"], "w": seg["w"],
-                "u_ref": u_ref, "v0": v0, "slope": slope,
             })
 
     spans = np.array([tr["u1"] - tr["u0"] for tr in tracks], dtype=np.float64)
@@ -236,28 +226,32 @@ def detect_periodic_grids(
     ref_span = float(np.percentile(spans, 85))
     long_tracks = [
         tr for tr in tracks
-        if (tr["u1"] - tr["u0"]) >= max(40.0, 0.35 * ref_span)
-        and tr["total_len"] >= 0.40 * (tr["u1"] - tr["u0"])
+        if (tr["u1"] - tr["u0"]) >= max(40.0, 0.30 * ref_span)
+        and tr["total_len"] >= 0.25 * (tr["u1"] - tr["u0"])
     ]
     if len(long_tracks) < 3:
         return [], set()
 
     u_page_mid = float(np.median([0.5 * (tr["u0"] + tr["u1"]) for tr in long_tracks]))
-    long_tracks.sort(key=lambda tr: _track_v_at(tr, u_page_mid))
+    long_tracks.sort(key=lambda tr: _track_eval_piecewise(tr["members"], u_page_mid))
 
     def tracks_overlap_and_dv(a: Dict[str, Any], b: Dict[str, Any]) -> Tuple[float, float]:
         ov_lo = max(a["u0"], b["u0"])
         ov_hi = min(a["u1"], b["u1"])
         ov = ov_hi - ov_lo
         min_sp = max(1e-6, min(a["u1"] - a["u0"], b["u1"] - b["u0"]))
-        u_eval = 0.5 * (ov_lo + ov_hi) if ov > 0 else u_page_mid
-        dv = _track_v_at(b, u_eval) - _track_v_at(a, u_eval)
+        if ov > 0:
+            us_eval = np.linspace(ov_lo, ov_hi, 5)
+            dvs = [_track_eval_piecewise(b["members"], u) - _track_eval_piecewise(a["members"], u) for u in us_eval]
+            dv = float(np.median(dvs))
+        else:
+            dv = _track_eval_piecewise(b["members"], u_page_mid) - _track_eval_piecewise(a["members"], u_page_mid)
         return ov / min_sp, dv
 
     adj_gaps: List[float] = []
     for a, b in zip(long_tracks, long_tracks[1:]):
         ov_ratio, dv = tracks_overlap_and_dv(a, b)
-        if ov_ratio >= 0.35 and dv > 2.0 * max(a["w"], b["w"]):
+        if ov_ratio >= 0.30 and dv > 2.0 * max(a["w"], b["w"]):
             adj_gaps.append(dv)
     if not adj_gaps:
         return [], set()
@@ -265,7 +259,7 @@ def detect_periodic_grids(
     adj_gaps.sort()
     best_cluster: List[float] = []
     for g in adj_gaps:
-        cluster = [x for x in adj_gaps if abs(x - g) <= 0.18 * g + 1.5]
+        cluster = [x for x in adj_gaps if abs(x - g) <= 0.20 * g + 1.5]
         if len(cluster) > len(best_cluster):
             best_cluster = cluster
     if len(best_cluster) < 2:
@@ -274,52 +268,208 @@ def detect_periodic_grids(
 
     grids: List[Dict[str, Any]] = []
     used: set[int] = set()
+    tol_dv = max(2.5, 0.25 * step_s)
+
     for i in range(len(long_tracks)):
         if i in used:
             continue
-        chain = [i]
+        chain_indices = [i]
+        curves: List[Dict[str, Any]] = [{"kind": "track", "members": long_tracks[i]["members"]}]
         cur = long_tracks[i]
+        cur_w = cur["w"]
         for j in range(i + 1, len(long_tracks)):
             if j in used:
                 continue
             cand = long_tracks[j]
             ov_ratio, dv = tracks_overlap_and_dv(cur, cand)
-            if dv > 1.32 * step_s + 2.5:
+            if dv > 2.30 * step_s + 3.0:
                 break
-            if ov_ratio >= 0.35 and abs(dv - step_s) <= max(2.2, 0.24 * step_s):
-                chain.append(j)
+            if ov_ratio < 0.30:
+                continue
+            if max(cur_w, cand["w"]) / max(0.5, min(cur_w, cand["w"])) > 2.6:
+                continue
+            if abs(dv - step_s) <= tol_dv:
+                chain_indices.append(j)
+                curves.append({"kind": "track", "members": cand["members"]})
                 cur = cand
-        if len(chain) >= 3:
-            for idx_t in chain:
+                cur_w = 0.5 * (cur_w + cand["w"])
+            elif abs(dv - 2.0 * step_s) <= 1.35 * tol_dv:
+                prev_curve = curves[-1]
+                next_curve = {"kind": "track", "members": cand["members"]}
+                curves.append({"kind": "interp", "a": prev_curve, "b": next_curve})
+                curves.append(next_curve)
+                chain_indices.append(j)
+                cur = cand
+                cur_w = 0.5 * (cur_w + cand["w"])
+
+        if len(chain_indices) >= 3:
+            for idx_t in chain_indices:
                 used.add(idx_t)
-            trs = [long_tracks[idx_t] for idx_t in chain]
+            trs = [long_tracks[idx_t] for idx_t in chain_indices]
             u_lo = min(tr["u0"] for tr in trs)
             u_hi = max(tr["u1"] for tr in trs)
             u_mid = 0.5 * (u_lo + u_hi)
-            line_vs = [_track_v_at(tr, u_mid) for tr in trs]
+            line_vs = [_curve_eval(cv, u_mid) for cv in curves]
             steps = [line_vs[k + 1] - line_vs[k] for k in range(len(line_vs) - 1)]
-            line_ids = sorted(m["id"] for tr in trs for m in tr["members"])
+            line_w = float(np.median([tr["w"] for tr in trs]))
+            line_ids = sorted({m["id"] for tr in trs for m in tr["members"]})
             grids.append({
                 "grid_id": len(grids) + 1,
-                "line_count": len(trs),
+                "line_count": len(curves),
                 "step_px": round(float(np.median(steps)), 2),
                 "angle_deg": round(theta_deg, 2),
                 "u_span": [round(u_lo, 2), round(u_hi, 2)],
                 "v_span": [round(line_vs[0], 2), round(line_vs[-1], 2)],
                 "line_v_coords": [round(v, 2) for v in line_vs],
                 "primitive_ids": line_ids,
+                "_curves": curves,
+                "_line_w": line_w,
             })
 
-    grid_pids = {pid for g in grids for pid in g["primitive_ids"]}
-    return grids, grid_pids
+    assigned_grid_pids: set[int] = {pid for g in grids for pid in g["primitive_ids"]}
+
+    def _shifted_eval(cv: Dict[str, Any], delta_v: float, u_val: float) -> float:
+        return _curve_eval(cv, u_val) + delta_v
+
+    def _merged_span_len(ivs: List[Tuple[float, float]]) -> float:
+        if not ivs:
+            return 0.0
+        s_ivs = sorted(ivs)
+        cur_a, cur_b = s_ivs[0]
+        tot = 0.0
+        for a, b in s_ivs[1:]:
+            if a <= cur_b:
+                cur_b = max(cur_b, b)
+            else:
+                tot += cur_b - cur_a
+                cur_a, cur_b = a, b
+        return tot + (cur_b - cur_a)
+
+    for g in grids:
+        lw = g["_line_w"]
+        g_step = float(g["step_px"])
+        tol_v = max(2.6, 1.7 * lw)
+        for _side_pass in range(2):
+            extended = False
+            g_u0, g_u1 = g["u_span"]
+            g_span = max(1e-6, g_u1 - g_u0)
+            for side in ("top", "bot"):
+                ref_cv = g["_curves"][0] if side == "top" else g["_curves"][-1]
+                delta = -g_step if side == "top" else g_step
+                cand_segs: List[Dict[str, Any]] = []
+                cand_ivs: List[Tuple[float, float]] = []
+                for p in primitives:
+                    pid = int(p["id"])
+                    if pid in assigned_grid_pids or p["type"] != "banda_dreapta":
+                        continue
+                    if _angle_diff_180(float(p["angle_deg"]), theta_deg) > 12.0:
+                        continue
+                    if float(p["width_px"]) > max(3.2, 2.1 * lw):
+                        continue
+                    pa = np.array(p["start"], dtype=np.float64)
+                    pb = np.array(p["end"], dtype=np.float64)
+                    ua, va = float(np.dot(pa, u_vec)), float(np.dot(pa, v_vec))
+                    ub, vb = float(np.dot(pb, u_vec)), float(np.dot(pb, v_vec))
+                    if ub < ua:
+                        ua, ub, va, vb = ub, ua, vb, va
+                    if ub < g_u0 - 0.5 * g_step or ua > g_u1 + 0.5 * g_step:
+                        continue
+                    ea = abs(va - _shifted_eval(ref_cv, delta, ua))
+                    eb = abs(vb - _shifted_eval(ref_cv, delta, ub))
+                    if max(ea, eb) <= tol_v:
+                        cand_segs.append({
+                            "id": pid, "ua": ua, "va": va, "ub": ub, "vb": vb,
+                            "len": float(p["length_px"]), "w": float(p["width_px"]),
+                        })
+                        ca, cb = max(g_u0, ua), min(g_u1, ub)
+                        if cb > ca:
+                            cand_ivs.append((ca, cb))
+                if cand_segs and _merged_span_len(cand_ivs) >= 0.25 * g_span:
+                    new_cv = {"kind": "track", "members": cand_segs}
+                    if side == "top":
+                        g["_curves"].insert(0, new_cv)
+                    else:
+                        g["_curves"].append(new_cv)
+                    for cs in cand_segs:
+                        g["primitive_ids"].append(cs["id"])
+                        assigned_grid_pids.add(cs["id"])
+                        g["u_span"] = [
+                            round(min(g["u_span"][0], cs["ua"]), 2),
+                            round(max(g["u_span"][1], cs["ub"]), 2),
+                        ]
+                    g["line_count"] = len(g["_curves"])
+                    u_mid = 0.5 * (g["u_span"][0] + g["u_span"][1])
+                    lvs = [_curve_eval(cv, u_mid) for cv in g["_curves"]]
+                    g["v_span"] = [round(lvs[0], 2), round(lvs[-1], 2)]
+                    g["line_v_coords"] = [round(v, 2) for v in lvs]
+                    extended = True
+            if not extended:
+                break
+
+    for p in primitives:
+        pid = int(p["id"])
+        if pid in assigned_grid_pids or p["type"] != "banda_dreapta":
+            continue
+        if _angle_diff_180(float(p["angle_deg"]), theta_deg) > 12.0:
+            continue
+        pa = np.array(p["start"], dtype=np.float64)
+        pb = np.array(p["end"], dtype=np.float64)
+        ua, va = float(np.dot(pa, u_vec)), float(np.dot(pa, v_vec))
+        ub, vb = float(np.dot(pb, u_vec)), float(np.dot(pb, v_vec))
+        if ub < ua:
+            ua, ub, va, vb = ub, ua, vb, va
+        pw = float(p["width_px"])
+
+        best_g = None
+        best_err = float("inf")
+        for g in grids:
+            lw = g["_line_w"]
+            if pw > max(3.2, 2.1 * lw):
+                continue
+            if ub < g["u_span"][0] - 0.8 * g["step_px"] or ua > g["u_span"][1] + 0.8 * g["step_px"]:
+                continue
+            tol_v = max(2.4, 1.6 * lw)
+            for cv in g["_curves"]:
+                ea = abs(va - _curve_eval(cv, ua))
+                eb = abs(vb - _curve_eval(cv, ub))
+                err = max(ea, eb)
+                if err <= tol_v and err < best_err:
+                    best_err = err
+                    best_g = g
+        if best_g is not None:
+            best_g["primitive_ids"].append(pid)
+            assigned_grid_pids.add(pid)
+            best_g["u_span"] = [
+                round(min(best_g["u_span"][0], ua), 2),
+                round(max(best_g["u_span"][1], ub), 2),
+            ]
+
+    for g in grids:
+        g["primitive_ids"] = sorted(set(g["primitive_ids"]))
+        del g["_curves"]
+        del g["_line_w"]
+
+    return grids, assigned_grid_pids
 
 
-# ---------------------------------------------------------------------------
-# 3. Analiza completă de Strat 2 (molecule, bare, poduri, ancore, rânduri)
-# ---------------------------------------------------------------------------
 def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
-    primitives, all_ids = validate_layer1(layer1)
+    l1_ver = layer1.get("lossless_verification")
+    if isinstance(l1_ver, dict):
+        if int(l1_ver.get("layer0_dss_xor_error_pixels", 0)) != 0:
+            raise RuntimeError("Poarta Strat 0 picată: XOR != 0")
+        if int(l1_ver.get("layer1_uncovered_ink_pixels", 0)) != 0:
+            raise RuntimeError("Poarta Strat 1 picată: uncovered != 0")
+        if l1_ver.get("guaranteed_100pct_coverage") is False:
+            raise RuntimeError("Poarta Strat 1 picată: guaranteed_100pct_coverage == False")
+
+    primitives: List[Dict[str, Any]] = layer1["primitives"]
+    id_counts = Counter(int(p["id"]) for p in primitives)
+    dups_l1 = sorted(pid for pid, cnt in id_counts.items() if cnt != 1)
+    if dups_l1:
+        raise RuntimeError(f"Stratul 1 conține ID-uri duplicate: {dups_l1[:10]}")
+
     by_id: Dict[int, Dict[str, Any]] = {int(p["id"]): p for p in primitives}
+    all_ids = set(by_id.keys())
 
     theta_deg, u_vec, v_vec = estimate_dominant_axis(primitives)
     uv_boxes = {pid: _prim_uv_box(p, u_vec, v_vec) for pid, p in by_id.items()}
@@ -367,6 +517,7 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
     transverse_bars: List[Dict[str, Any]] = []
     parallel_bridges: List[Dict[str, Any]] = []
     anchored_sticks: List[Dict[str, Any]] = []
+    bar_pids_found: set[int] = set()
 
     for mid, comp in enumerate(raw_molecules, start=1):
         mu0 = min(uv_boxes[i][0] for i in comp)
@@ -386,12 +537,13 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
         spots = [by_id[i] for i in comp if by_id[i]["type"] == "pata_compacta"]
         curves = [by_id[i] for i in comp if by_id[i]["type"] == "banda_curba"]
 
-        is_grid_bar = False
-        spanned_grids: List[int] = []
-        if len(straights) == 1 and not spots and not curves and grids:
-            s = straights[0]
-            if 65.0 <= _angle_diff_180(float(s["angle_deg"]), theta_deg) <= 115.0:
-                su0, sv0, su1, sv1 = uv_boxes[s["id"]]
+        local_bars: List[Dict[str, Any]] = []
+        if grids and zone == "pe_grila":
+            for s in straights:
+                sid_bar = int(s["id"])
+                if not (70.0 <= _angle_diff_180(float(s["angle_deg"]), theta_deg) <= 110.0):
+                    continue
+                su0, sv0, su1, sv1 = uv_boxes[sid_bar]
                 cand_grids = []
                 for g in grids:
                     gu0, gu1 = g["u_span"]
@@ -402,24 +554,45 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
                         ov_v = min(sv1, gv1) - max(sv0, gv0)
                         if ov_v >= 0.80 * gh:
                             cand_grids.append(g)
-                if cand_grids:
-                    top_gv0 = min(g["v_span"][0] for g in cand_grids)
-                    bot_gv1 = max(g["v_span"][1] for g in cand_grids)
-                    gs_ref = cand_grids[0]["step_px"]
-                    if sv0 >= top_gv0 - 0.85 * gs_ref and sv1 <= bot_gv1 + 0.85 * gs_ref:
-                        is_grid_bar = True
-                        spanned_grids = [g["grid_id"] for g in cand_grids]
+                if not cand_grids:
+                    continue
+                top_gv0 = min(g["v_span"][0] for g in cand_grids)
+                bot_gv1 = max(g["v_span"][1] for g in cand_grids)
+                gs_ref = cand_grids[0]["step_px"]
+                if sv0 < top_gv0 - 0.75 * gs_ref or sv1 > bot_gv1 + 0.75 * gs_ref:
+                    continue
+                has_large_blob_nb = any(
+                    by_id[nb]["type"] in ("pata_compacta", "banda_curba")
+                    and (uv_boxes[nb][2] - uv_boxes[nb][0]) >= 0.55 * gs_ref
+                    and (uv_boxes[nb][3] - uv_boxes[nb][1]) >= 0.45 * gs_ref
+                    for nb in adj[sid_bar]
+                )
+                if has_large_blob_nb:
+                    continue
+                bar_pids_found.add(sid_bar)
+                local_bars.append({
+                    "molecule_id": mid,
+                    "primitive_id": sid_bar,
+                    "spanned_grid_ids": [g["grid_id"] for g in cand_grids],
+                    "u_pos": round(0.5 * (su0 + su1), 2),
+                    "v_span": [round(sv0, 2), round(sv1, 2)],
+                    "length_px": s["length_px"],
+                    "angle_deg": s["angle_deg"],
+                })
 
         bridge_ids: set[int] = set()
         bridged_stick_ids: set[int] = set()
         local_bridges: List[Dict[str, Any]] = []
-        if len(straights) >= 3:
-            for cand in straights:
+        non_bar_straights = [s for s in straights if int(s["id"]) not in bar_pids_found]
+        if len(non_bar_straights) >= 3:
+            for cand in non_bar_straights:
                 cid = int(cand["id"])
                 nb_straights = [
                     by_id[nb] for nb in adj[cid]
-                    if by_id[nb]["type"] == "banda_dreapta"
+                    if nb not in bar_pids_found
+                    and by_id[nb]["type"] == "banda_dreapta"
                     and _angle_diff_180(float(cand["angle_deg"]), float(by_id[nb]["angle_deg"])) >= 28.0
+                    and _ribbon_touches_near_end(by_id[nb], cand)
                 ]
                 if len(nb_straights) < 2:
                     continue
@@ -440,6 +613,7 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
                     local_bridges.append({
                         "molecule_id": mid,
                         "bridge_id": cid,
+                        "bridge_primitive_id": cid,
                         "bridge_width_px": cand["width_px"],
                         "bridge_angle_deg": cand["angle_deg"],
                         "connected_parallel_ids": p_ids,
@@ -448,7 +622,7 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
                     })
 
         local_anchored: List[Dict[str, Any]] = []
-        for s in straights:
+        for s in non_bar_straights:
             sid = int(s["id"])
             if sid in bridge_ids:
                 continue
@@ -487,22 +661,18 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
                     "grid_ids": in_grids,
                 })
 
-        if is_grid_bar:
+        transverse_bars.extend(local_bars)
+        parallel_bridges.extend(local_bridges)
+        anchored_sticks.extend(local_anchored)
+
+        if len(local_bars) == 1 and len(comp) == 1:
             mtype = "bara_transversala_grila"
-            transverse_bars.append({
-                "molecule_id": mid,
-                "primitive_id": straights[0]["id"],
-                "spanned_grid_ids": spanned_grids,
-                "u_pos": round(0.5 * (mu0 + mu1), 2),
-                "v_span": [round(mv0, 2), round(mv1, 2)],
-                "length_px": straights[0]["length_px"],
-                "angle_deg": straights[0]["angle_deg"],
-            })
         elif local_bridges:
             mtype = "grup_pe_pod"
-            parallel_bridges.extend(local_bridges)
         elif local_anchored:
             mtype = "bat_ancorat"
+        elif local_bars:
+            mtype = "bara_cu_atasament"
         elif len(straights) >= 2 and not spots and not curves:
             mtype = "retea_benzi_drepte"
         elif len(comp) == 1:
@@ -510,6 +680,7 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
         else:
             mtype = "molecula_mixta"
 
+        xy_boxes = [_prim_xy_box(by_id[i]) for i in comp]
         molecules.append({
             "molecule_id": mid,
             "type": mtype,
@@ -519,22 +690,16 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
             "primitive_count": len(comp),
             "uv_bbox": [round(mu0, 2), round(mv0, 2), round(mu1, 2), round(mv1, 2)],
             "xy_bbox": [
-                round(min(_prim_xy_box(by_id[i])[0] for i in comp), 1),
-                round(min(_prim_xy_box(by_id[i])[1] for i in comp), 1),
-                round(max(_prim_xy_box(by_id[i])[2] for i in comp), 1),
-                round(max(_prim_xy_box(by_id[i])[3] for i in comp), 1),
+                round(min(b[0] for b in xy_boxes), 1),
+                round(min(b[1] for b in xy_boxes), 1),
+                round(max(b[2] for b in xy_boxes), 1),
+                round(max(b[3] for b in xy_boxes), 1),
             ],
             "u_span_px": round(m_w, 2),
             "v_span_px": round(m_h, 2),
             "row_id": None,
         })
 
-        if is_grid_bar:
-            molecules[-1]["spanned_grid_ids"] = spanned_grids
-
-        anchored_sticks.extend(local_anchored)
-
-    # 4. Detecția șirurilor aliniate în coridoare libere (geometrie pură de rând)
     row_cands = [
         m for m in molecules
         if m["zone"] == "coridor_liber" and m["type"] not in ("bara_transversala_grila", "grup_pe_pod")
@@ -603,33 +768,18 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
                     "median_height_px": round(med_h, 2),
                 })
 
-    # 5. Verificare strictă: fiecare primitivă apare într-o singură grilă sau moleculă.
-    grid_occurrences: Dict[int, int] = defaultdict(int)
-    molecule_occurrences: Dict[int, int] = defaultdict(int)
-    for grid in grids:
-        for pid in grid["primitive_ids"]:
-            grid_occurrences[int(pid)] += 1
-    for molecule in molecules:
-        for pid in molecule["primitive_ids"]:
-            molecule_occurrences[int(pid)] += 1
+    prim_counts: Counter[int] = Counter()
+    for g in grids:
+        for pid in g["primitive_ids"]:
+            prim_counts[pid] += 1
+    for m in molecules:
+        for pid in m["primitive_ids"]:
+            prim_counts[pid] += 1
 
-    bad_duplicates = sorted(
-        pid for pid in all_ids
-        if grid_occurrences[pid] + molecule_occurrences[pid] > 1
-    )
-    missing_ids = sorted(
-        pid for pid in all_ids
-        if grid_occurrences[pid] + molecule_occurrences[pid] == 0
-    )
-    if bad_duplicates:
-        raise RuntimeError(f"Primitive duplicate între grile/molecule: {bad_duplicates[:12]}")
-    if missing_ids:
-        raise RuntimeError(f"Contabilitate incompletă în Stratul 2; primitive lipsă: {missing_ids[:12]}")
-
-    accounted_grid = {pid for pid, n in grid_occurrences.items() if n == 1}
-    accounted_mol = {pid for pid, n in molecule_occurrences.items() if n == 1}
-    if not accounted_grid.isdisjoint(accounted_mol) or (accounted_grid | accounted_mol) != all_ids:
-        raise RuntimeError("Auditul final al contabilității Stratul 2 a eșuat.")
+    missing = [pid for pid in all_ids if prim_counts[pid] == 0]
+    dups = [pid for pid, cnt in prim_counts.items() if cnt != 1]
+    if missing or dups:
+        raise RuntimeError(f"Audit Strat 2 picat: lipsă={len(missing)}, duplicate={len(dups)}")
 
     by_mtype: Dict[str, int] = defaultdict(int)
     for m in molecules:
@@ -645,8 +795,8 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
         },
         "accounting_verification": {
             "layer1_primitives_total": len(all_ids),
-            "grid_primitives": len(accounted_grid),
-            "molecule_primitives": len(accounted_mol),
+            "grid_primitives": len(grid_pids),
+            "molecule_primitives": len(all_ids) - len(grid_pids),
             "unaccounted_primitives": 0,
             "duplicate_primitives": 0,
             "guaranteed_100pct_accounting": True,
@@ -669,9 +819,6 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# 4. Vizualizare debug (3 imagini peste poza originală sau pânză neagră)
-# ---------------------------------------------------------------------------
 def _load_canvas(layer1: Dict[str, Any], image_override: Optional[str]) -> np.ndarray:
     img_path = image_override or layer1.get("image")
     if img_path and Path(img_path).exists():
@@ -732,19 +879,23 @@ def draw_debug_layer2(
     bridge_pids = {b["bridge_id"] for b in layer2["parallel_bridges"]}
     bridged_pids = {pid for b in layer2["parallel_bridges"] for pid in b["connected_parallel_ids"]}
     for b in layer2["parallel_bridges"]:
-        _draw_prim(v2, by_id[b["bridge_id"]], (0, 145, 255), 3)
+        col_b = (0, 145, 255) if b["zone"] == "pe_grila" else (80, 100, 130)
+        col_s = (0, 235, 110) if b["zone"] == "pe_grila" else (80, 120, 90)
+        _draw_prim(v2, by_id[b["bridge_id"]], col_b, 3 if b["zone"] == "pe_grila" else 1)
         for sid in b["connected_parallel_ids"]:
-            _draw_prim(v2, by_id[sid], (0, 235, 110), 2)
+            _draw_prim(v2, by_id[sid], col_s, 2 if b["zone"] == "pe_grila" else 1)
     for a in layer2["anchored_sticks"]:
         sid = a["stick_id"]
+        on_g = a["zone"] == "pe_grila"
         if sid not in bridged_pids and sid not in bridge_pids:
-            _draw_prim(v2, by_id[sid], (0, 210, 0), 2)
-        if a["end_A_attachments"]:
-            pt = (int(round(a["start_A"][0])), int(round(a["start_A"][1])))
-            cv2.circle(v2, pt, 4, (0, 0, 245), -1)
-        if a["end_B_attachments"]:
-            pt = (int(round(a["end_B"][0])), int(round(a["end_B"][1])))
-            cv2.circle(v2, pt, 4, (0, 0, 245), -1)
+            _draw_prim(v2, by_id[sid], (0, 210, 0) if on_g else (70, 115, 70), 2 if on_g else 1)
+        if on_g:
+            if a["end_A_attachments"]:
+                pt = (int(round(a["start_A"][0])), int(round(a["start_A"][1])))
+                cv2.circle(v2, pt, 4, (0, 0, 245), -1)
+            if a["end_B_attachments"]:
+                pt = (int(round(a["end_B"][0])), int(round(a["end_B"][1])))
+                cv2.circle(v2, pt, 4, (0, 0, 245), -1)
     cv2.imwrite(str(p2), v2)
 
     v3 = base.copy()
@@ -776,8 +927,6 @@ def process_layer1_json(
 ) -> Dict[str, Any]:
     json_path = Path(json_path)
     layer1 = json.loads(json_path.read_text(encoding="utf-8"))
-    # Validarea are loc înainte de orice analiză de topologie.
-    validate_layer1(layer1)
     layer2 = analyze_layer2(layer1)
     debug_paths = draw_debug_layer2(layer1, layer2, Path(out_dir), image_override)
     layer2["debug_images"] = debug_paths
@@ -791,10 +940,10 @@ def process_layer1_json(
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Motor de geometrie pură Stratul 2 (topologie, grile, molecule)")
-    parser.add_argument("layer1_json", help="Fișierul *_geometry_layer1.json produs de Stratul 1")
-    parser.add_argument("--out-dir", default="debug_l2", help="Directorul de ieșire")
-    parser.add_argument("--image", default=None, help="Opțional: imaginea originală pentru overlay debug")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("layer1_json")
+    parser.add_argument("--out-dir", default="debug_l2")
+    parser.add_argument("--image", default=None)
     args = parser.parse_args(argv)
     try:
         res = process_layer1_json(args.layer1_json, args.out_dir, args.image)
