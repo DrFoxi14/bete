@@ -174,7 +174,7 @@ class BeteHandler(BaseHTTPRequestHandler):
                 ]
                 json_name = "input_bete_v3.json"
                 engine_name = "bete_engine_page2.py"
-            else:
+            elif page == "3":
                 # Page 3: stratul 0 (DSS exact) + stratul 1 (partiție geometrică).
                 result = process_image_page3(input_path, run_dir, scale=1.0)
                 debug_names = [
