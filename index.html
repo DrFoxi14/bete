@@ -461,7 +461,7 @@ analyzeButton.addEventListener("click",async()=>{
   showAnalysis(data,selectedPage);
   setStatus("Pagina "+selectedPage+" a terminat analiza. Rezultatele sunt salvate local.","success");
  }catch(error){setStatus(error.message||"Nu am putut analiza fotografia.","error");}
- finally{analyzeButton.disabled=!selectedFile;analyzeButton.textContent="Rulează Pagina "+selectedPage;}
+ finally{analyzeButton.disabled=!selectedFile;analyzeButton.textContent=selectedPage==="4"?"Rulează Motorul Gemini":"Rulează Pagina "+selectedPage;}
 });
 fetch("/api/health")
  .then(response=>{if(!response.ok)throw new Error("Server indisponibil");return response.json();})
