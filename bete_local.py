@@ -21,6 +21,7 @@ from geometry_layer2 import process_layer1_json
 from geometry_layer3a_v51 import process_layer3a
 from geometry_layer2_gemini import process_layer1_json as process_layer1_json_gemini
 from geometry_layer3a_gemini import process_layer3a as process_layer3a_gemini
+from geometry_layer3b import process_layer3b
 
 ROOT = Path(__file__).resolve().parent
 WEB_FILE = ROOT / "index.html"
@@ -46,6 +47,7 @@ DEBUG_FILES = {
     "debug_l3a_1_grid_metric_support.png",
     "debug_l3a_2_contacts_geometry.png",
     "debug_l3a_3_accounting_zones.png",
+    "debug_l3b_1_notes_stems_beams.png",
 }
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -75,7 +77,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_bytes(200, WEB_FILE.read_bytes(), "text/html; charset=utf-8")
             return
         if parsed.path == "/api/health":
-            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py", "3": "Straturile 0 + 1 + 2 + Geometry Layer 3A v5.1", "4": "Motor Gemini — bete_engine_page3.py + geometry_layer2_gemini.py + geometry_layer3a_gemini.py"}})
+            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py", "3": "Straturile 0 + 1 + 2 + Geometry Layer 3A v5.1", "4": "Motor Gemini — Straturile 0 + 1 + 2 + 3 + 3B.1 Semantică Muzicală Stem-First"}})
             return
         if parsed.path.startswith("/api/files/"):
             self._serve_file(parsed.path)
@@ -92,7 +94,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Adresă invalidă."})
             return
         allowed_input = filename in {"input.png", "input.jpg", "input.jpeg"}
-        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json", "input_dss_lossless.json", "input_geometry_layer1.json", "input_geometry_layer2.json", "input_geometry_layer3a.json"}
+        allowed_json = filename in {"input_rezultate.json", "input_bete_v3.json", "input_dss_lossless.json", "input_geometry_layer1.json", "input_geometry_layer2.json", "input_geometry_layer3a.json", "input_music_layer3b.json"}
         if filename not in DEBUG_FILES and not allowed_input and not allowed_json:
             self._send_json(403, {"error": "Fișierul nu este expus de server."})
             return
@@ -334,6 +336,35 @@ class BeteHandler(BaseHTTPRequestHandler):
                 result["layer1_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer1.json"
                 result["layer2_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer2.json"
                 result["layer3a_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer3a.json"
+
+                # Stratul 3B.1: semantică muzicală stem-first; primește exclusiv JSON-ul validat 3A.
+                layer3b_result = process_layer3b(
+                    layer3a_json_path, run_dir, image_override=str(input_path)
+                )
+                layer3b_json_path = Path(layer3b_result.get("json_file", "")).resolve()
+                if layer3b_json_path.parent != run_dir.resolve() or layer3b_json_path.name != "input_music_layer3b.json":
+                    raise RuntimeError("Stratul 3B.1 a produs un JSON în afara execuției curente.")
+                result["layer3b"] = {
+                    "schema_version": layer3b_result.get("schema_version"),
+                    "upstream_schema_version": layer3b_result.get("upstream_schema_version"),
+                    "totals": layer3b_result.get("totals", {}),
+                    "grids": [{
+                        "grid_id": grid.get("grid_id"),
+                        "spacing_px": grid.get("spacing_px"),
+                        "counts": grid.get("counts", {}),
+                        "stems": grid.get("stems", []),
+                        "beams": grid.get("beams", []),
+                        "events": grid.get("events", []),
+                        "cells": grid.get("cells", []),
+                        "unclassified_primitive_ids": grid.get("unclassified_primitive_ids", []),
+                    } for grid in layer3b_result.get("grids", [])],
+                }
+                result["layer3b_debug_images"] = {
+                    Path(name).stem: "/api/files/" + run_id + "/" + Path(name).name
+                    for name in layer3b_result.get("debug_images", {}).values()
+                }
+                result["layer3b_json_download_url"] = "/api/files/" + run_id + "/input_music_layer3b.json"
+                json_name = "input_music_layer3b.json"
         except Exception as exc:
             self._send_json(422, {"error": "Analiza a eșuat: " + str(exc)[:500]})
             return
