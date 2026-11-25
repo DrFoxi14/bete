@@ -78,13 +78,25 @@ python geometry_layer2.py debug_geo/poza_geometry_layer1.json --out-dir debug_l2
 
 Fotografia originală poate fi folosită numai ca fundal vizual al imaginilor debug; deciziile geometrice ale Stratului 2 sunt calculate din primitivele din JSON. Câmpul de calibrare pixeli/cm este ascuns pentru această pagină, deoarece scale înseamnă scalarea imaginii, nu calibrare fizică. Produce patru imagini de debug și un JSON cu sumar, primitive și joncțiuni.
 
+## Motor Gemini — Stratul 3B.1
+
+Tabul **Motor Gemini** rulează separat de Pagina 3. Folosește Straturile 0 + 1 din `bete_engine_page3.py`, apoi implementările dedicate `geometry_layer2_gemini.py` și `geometry_layer3a_gemini.py`, urmate de `geometry_layer3b.py`.
+
+Stratul 3B.1 — Semantică Muzicală Stem-First — primește JSON-ul validat al Stratului 3 și interpretează structurile geometrice în tije, capete de note, beams, flags, puncte și evenimente muzicale. Produce `*_music_layer3b.json` și imaginea `debug_l3b_1_notes_stems_beams.png`. Rezultatele sunt interpretări structurale, nu o transcriere muzicală certificată.
+
+Rulare manuală după Stratul 3:
+
+```bash
+python geometry_layer3b.py debug_geo/input_geometry_layer3a.json --out-dir debug_l3b --image fotografie.jpg
+```
+
 ## Utilizare
 
-1. Alege Pagina 1, 2 sau 3.
+1. Alege Pagina 1, 2, 3 sau Motor Gemini.
 2. Încarcă o fotografie PNG/JPG.
 3. Opțional, introdu calibrarea pixeli/cm pentru Paginile 1 și 2.
 4. Apasă butonul de rulare.
-5. Pe Pagina 3, inspectează cele șapte imagini, primitivele din Stratul 1 și rapoartele topologice din Stratul 2.
+5. Pe Pagina 3, inspectează rezultatele geometrice; în Motor Gemini, inspectează și evenimentele muzicale din Stratul 3B.1.
 6. Descarcă JSON-ul analizei respective.
 
 ## Linie de comandă
