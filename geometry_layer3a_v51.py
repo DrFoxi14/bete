@@ -2010,6 +2010,60 @@ def _describe_grid_primitives_and_graphs(
 # ---------------------------------------------------------------------------
 # 5. Orchestrator Strat 3A v5.1 + Graf global EXHAUSTIV + Audit STRICT count == 1
 # ---------------------------------------------------------------------------
+
+# --- Compatibilitate geometrică pentru orchestratorul actualizat ---
+def _prim_polygon_xy(p: Dict[str, Any]) -> np.ndarray:
+    if p["type"] == "banda_dreapta":
+        return _ribbon_oriented_polygon_xy(p)
+    return _aabb_polygon_xy(p["bbox"])
+
+
+def _poly_to_tuples(poly: Any) -> np.ndarray:
+    return np.asarray(poly, dtype=np.float64).reshape((-1, 2))
+
+
+def _orthonormalize_frame(
+    u_raw: np.ndarray, v_raw: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    u_raw = np.asarray(u_raw, dtype=np.float64).reshape(2)
+    v_raw = np.asarray(v_raw, dtype=np.float64).reshape(2)
+    raw_u_norm = float(np.linalg.norm(u_raw))
+    raw_v_norm = float(np.linalg.norm(v_raw))
+    raw_dot = float(np.dot(u_raw, v_raw))
+    if (not np.all(np.isfinite(u_raw)) or not np.all(np.isfinite(v_raw))
+            or raw_u_norm <= 1e-12):
+        raise GateViolationError("page_frame: axa U este invalidă sau degenerată.")
+    u_vec = u_raw / raw_u_norm
+    v_orth = v_raw - float(np.dot(v_raw, u_vec)) * u_vec
+    v_norm = float(np.linalg.norm(v_orth))
+    if v_norm <= 1e-12 or not math.isfinite(v_norm):
+        raise GateViolationError("page_frame: axa V este degenerată după ortogonalizare.")
+    v_vec = v_orth / v_norm
+    if float(np.dot(v_vec, v_raw)) < 0.0:
+        v_vec = -v_vec
+    meta = {
+        "u_axis_raw": [float(x) for x in u_raw],
+        "v_axis_raw": [float(x) for x in v_raw],
+        "raw_u_norm": raw_u_norm,
+        "raw_v_norm": raw_v_norm,
+        "raw_dot_uv": raw_dot,
+        "u_axis_orthonormal": [float(x) for x in u_vec],
+        "v_axis_orthonormal": [float(x) for x in v_vec],
+        "orthonormal_dot_uv": float(np.dot(u_vec, v_vec)),
+    }
+    return u_vec, v_vec, meta
+
+
+def _pair_distance_precision(pa: Dict[str, Any], pb: Dict[str, Any]) -> str:
+    a_ribbon = pa.get("type") == "banda_dreapta"
+    b_ribbon = pb.get("type") == "banda_dreapta"
+    if a_ribbon and b_ribbon:
+        return "exact_oriented_rectangle_polygon"
+    if a_ribbon or b_ribbon:
+        return "exact_oriented_rect_to_bbox_approx_contour"
+    return "exact_bbox_to_bbox_approx_contour"
+
+
 def analyze_layer3a(
     layer1: Dict[str, Any],
     layer2: Dict[str, Any],
@@ -2019,14 +2073,18 @@ def analyze_layer3a(
     gate_report = validate_upstream_gates_strict(layer1, layer2, cfg)
 
     by_id: Dict[int, Dict[str, Any]] = {int(p["id"]): p for p in layer1["primitives"]}
+    poly_xy: Dict[int, np.ndarray] = {
+        pid: _poly_to_tuples(_prim_polygon_xy(p)) for pid, p in by_id.items()
+    }
     sym_nb, asym_edge_count = _build_symmetrized_neighbor_graph(by_id)
     expected_pids = sorted(by_id.keys())
     expected_mids = sorted(int(m["molecule_id"]) for m in layer2.get("molecules", []))
 
     pf = layer2["page_frame"]
-    theta_deg = float(pf["dominant_angle_deg"])
-    u_vec = np.array(pf["u_axis"], dtype=np.float64)
-    v_vec = np.array(pf["v_axis"], dtype=np.float64)
+    u_raw = np.array(pf["u_axis"], dtype=np.float64)
+    v_raw = np.array(pf["v_axis"], dtype=np.float64)
+    u_vec, v_vec, frame_ortho_meta = _orthonormalize_frame(u_raw, v_raw)
+    theta_deg = math.degrees(math.atan2(float(u_vec[1]), float(u_vec[0]))) % 180.0
     uv_boxes = {pid: _prim_uv_box(p, u_vec, v_vec) for pid, p in by_id.items()}
 
     prim_assign_count: Counter[int] = Counter()
@@ -2115,7 +2173,6 @@ def analyze_layer3a(
             "xy_bbox": [round(x, 2) for x in _prim_xy_box(p)],
         })
 
-    # Audit STRICT pe contoare exacte (count == 1 pentru primitive ȘI molecule!)
     missing_prims = [pid for pid in expected_pids if prim_assign_count[pid] == 0]
     multi_prims = [pid for pid, cnt in prim_assign_count.items() if cnt != 1]
     extra_prims = [pid for pid in prim_assign_count if pid not in by_id]
@@ -2134,12 +2191,11 @@ def analyze_layer3a(
             f"Audit molecule Strat 3A picat: lipsă={len(missing_mols)}, multi={len(multi_mols)}, extra={len(extra_mols)}."
         )
 
-    # --- Graf spațial GLOBAL EXHAUSTIV ---
     if grid_models:
         page_s_ref = float(np.median([gm.spacing_px for gm in grid_models.values()]))
         max_s_page = max(gm.spacing_px for gm in grid_models.values())
     elif _is_finite_num(pf.get("grid_step_px")) and float(pf["grid_step_px"]) > 0.0:
-        page_s_ref = float(pf["grid_step_px"])
+        page_s_ref = float(pf["grid_step_px"]) / max(1e-12, float(np.linalg.norm(v_raw)))
         max_s_page = page_s_ref
     elif by_id:
         sizes = [max(float(p["length_px"]), float(p["width_px"])) for p in by_id.values() if max(float(p["length_px"]), float(p["width_px"])) > 0.0]
@@ -2151,7 +2207,6 @@ def analyze_layer3a(
 
     max_global_prox_px = cfg.proximity_radius_in_S * max(1e-6, max_s_page)
 
-    # A) Toate perechile de primitive non-linie (care nu sunt deja intra-grilă)
     mol_pids_sorted = sorted(prim_to_mol.keys(), key=lambda pid: (uv_boxes[pid][0], uv_boxes[pid][1], pid))
     global_candidates: set[Tuple[int, int]] = set()
     n_mol_p = len(mol_pids_sorted)
@@ -2173,12 +2228,12 @@ def analyze_layer3a(
         for j in range(i + 1, n_mol_p):
             pid_j = mol_pids_sorted[j]
             box_j = uv_boxes[pid_j]
-            if box_j[0] - box_i[2] > max_global_prox_px:
+            if box_j[0] - box_i[2] > max_global_prox_px + 1e-6:
                 break
             gid_j = all_grid_prim_recs[pid_j]["grid_id"] if pid_j in all_grid_prim_recs else None
             if gid_i is not None and gid_i == gid_j:
                 continue
-            if _uv_box_gap(box_i, box_j)[2] <= max_global_prox_px:
+            if _uv_box_gap(box_i, box_j)[2] <= max_global_prox_px + 1e-6:
                 lo, hi = (pid_i, pid_j) if pid_i < pid_j else (pid_j, pid_i)
                 global_candidates.add((lo, hi))
 
@@ -2202,22 +2257,26 @@ def analyze_layer3a(
 
         is_nb = pid_b in sym_nb[pid_a]
         same_zone = prim_roles[pid_a] == prim_roles[pid_b]
-        contact = _compute_pair_contact(
-            pid_a, pid_b, pa, pb, prim_to_mol[pid_a], prim_to_mol[pid_b],
-            gid_a, gid_b, uv_boxes, u_vec, v_vec, is_nb, s_pair, cfg
-        )
-        if contact is not None:
-            contact["zone_a"] = prim_roles[pid_a]
-            contact["zone_b"] = prim_roles[pid_b]
-            contact["involves_transverse_bar"] = (pid_a in bar_pids) or (pid_b in bar_pids)
-            if same_zone:
-                non_grid_internal_contacts.append(contact)
-            else:
-                cross_zone_contacts.append(contact)
-            continue
-
         gu, gv, box_gap = _uv_box_gap(uv_boxes[pid_a], uv_boxes[pid_b])
-        if box_gap <= cfg.proximity_radius_in_S * max(1e-6, s_pair):
+        near_touch_pair = cfg.near_touch_in_S * max(1e-6, s_pair)
+
+        if is_nb or box_gap <= near_touch_pair + 1e-6:
+            contact = _compute_pair_contact(
+                pid_a, pid_b, pa, pb, prim_to_mol[pid_a], prim_to_mol[pid_b],
+                gid_a, gid_b, uv_boxes, u_vec, v_vec, is_nb, s_pair, cfg
+            )
+            if contact is not None:
+                contact["zone_a"] = prim_roles[pid_a]
+                contact["zone_b"] = prim_roles[pid_b]
+                contact["involves_transverse_bar"] = (pid_a in bar_pids) or (pid_b in bar_pids)
+                if same_zone:
+                    non_grid_internal_contacts.append(contact)
+                else:
+                    cross_zone_contacts.append(contact)
+                continue
+
+        exact_gap_px, _ = _convex_polygons_exact_distance(poly_xy[pid_a], poly_xy[pid_b])
+        if exact_gap_px <= cfg.proximity_radius_in_S * max(1e-6, s_pair):
             uc_a, vc_a = _prim_uv_center(pa, u_vec, v_vec)
             uc_b, vc_b = _prim_uv_center(pb, u_vec, v_vec)
             du_s = (uc_b - uc_a) / max(1e-6, s_pair)
@@ -2231,9 +2290,12 @@ def analyze_layer3a(
                 "zone_b": prim_roles[pid_b],
                 "type_a": pa["type"],
                 "type_b": pb["type"],
+                "distance_precision": _pair_distance_precision(pa, pb),
                 "s_ref_px": round(s_pair, 3),
                 "du_a_to_b_in_S": round(du_s, 3),
                 "dv_a_to_b_in_S": round(dv_s, 3),
+                "exact_gap_px": round(exact_gap_px, 3),
+                "exact_gap_in_S": round(exact_gap_px / max(1e-6, s_pair), 3),
                 "box_gap_u_in_S": round(gu / max(1e-6, s_pair), 3),
                 "box_gap_v_in_S": round(gv / max(1e-6, s_pair), 3),
                 "box_gap_in_S": round(box_gap / max(1e-6, s_pair), 3),
@@ -2244,7 +2306,6 @@ def analyze_layer3a(
             else:
                 cross_zone_proximities.append(prox_rec)
 
-    # B) Contacte ȘI proximități între primitive non-linie și liniile ALTOR grile (până la `proximity_radius_in_S`)
     cross_grid_line_contacts: List[Dict[str, Any]] = []
     cross_grid_line_proximities: List[Dict[str, Any]] = []
     if all_grid_line_meta:
@@ -2259,25 +2320,30 @@ def analyze_layer3a(
                 s_g = grid_models[target_gid].spacing_px
                 is_nb = gpid in sym_nb[pid]
                 box_l = uv_boxes[gpid]
-                _, _, box_gap = _uv_box_gap(box_p, box_l)
                 max_g_prox = cfg.proximity_radius_in_S * max(1e-6, s_g)
-                if not is_nb and box_gap > max_g_prox:
+                _, _, gl_bgap = _uv_box_gap(box_p, box_l)
+                if not is_nb and gl_bgap > max_g_prox + 1e-6:
                     continue
-                glc = _compute_grid_line_contact(
-                    pid, target_gid, gpid, line_idx, by_id[pid], by_id[gpid], is_nb, s_g, cfg
-                )
-                if glc is not None:
-                    glc["primitive_zone"] = prim_roles[pid]
-                    cross_grid_line_contacts.append(glc)
-                elif box_gap <= max_g_prox:
+                if is_nb or gl_bgap <= cfg.near_touch_in_S * max(1e-6, s_g) + 1e-6:
+                    glc = _compute_grid_line_contact(
+                        pid, target_gid, gpid, line_idx, by_id[pid], by_id[gpid], is_nb, s_g, cfg
+                    )
+                    if glc is not None:
+                        glc["primitive_zone"] = prim_roles[pid]
+                        cross_grid_line_contacts.append(glc)
+                        continue
+                exact_gap_px, _ = _convex_polygons_exact_distance(poly_xy[pid], poly_xy[gpid])
+                if exact_gap_px <= max_g_prox:
                     glp = _compute_grid_line_proximity(
                         pid, target_gid, gpid, line_idx, by_id[pid], by_id[gpid],
                         box_p, box_l, u_vec, v_vec, s_g
                     )
+                    glp["distance_precision"] = _pair_distance_precision(by_id[pid], by_id[gpid])
+                    glp["exact_gap_px"] = round(exact_gap_px, 3)
+                    glp["exact_gap_in_S"] = round(exact_gap_px / max(1e-6, s_g), 3)
                     glp["primitive_zone"] = prim_roles[pid]
                     cross_grid_line_proximities.append(glp)
 
-    # C) Relații LINIE-LINIE între grile diferite (contacte + proximități până la `proximity_radius_in_S`)
     cross_grid_line_to_line_contacts: List[Dict[str, Any]] = []
     cross_grid_line_to_line_proximities: List[Dict[str, Any]] = []
     if len(grid_models) >= 2 and all_grid_line_meta:
@@ -2295,11 +2361,11 @@ def analyze_layer3a(
             for j in range(i + 1, n_gl):
                 gp_j = gl_sorted_u[j]
                 box_j = uv_boxes[gp_j]
-                if box_j[0] - box_i[2] > max_global_prox_px:
+                if box_j[0] - box_i[2] > max_global_prox_px + 1e-6:
                     break
                 if all_grid_line_meta[gp_j][0] == gid_i:
                     continue
-                if _uv_box_gap(box_i, box_j)[2] <= max_global_prox_px:
+                if _uv_box_gap(box_i, box_j)[2] <= max_global_prox_px + 1e-6:
                     lo, hi = (gp_i, gp_j) if gp_i < gp_j else (gp_j, gp_i)
                     gl_cands.add((lo, hi))
 
@@ -2309,23 +2375,25 @@ def analyze_layer3a(
             s_pair = 0.5 * (grid_models[gid_a].spacing_px + grid_models[gid_b].spacing_px)
             is_nb = gp_b in sym_nb[gp_a]
             pa, pb = by_id[gp_a], by_id[gp_b]
-
-            contact = _compute_pair_contact(
-                gp_a, gp_b, pa, pb, None, None, gid_a, gid_b,
-                uv_boxes, u_vec, v_vec, is_nb, s_pair, cfg
-            )
-            if contact is not None:
-                contact["grid_a"] = gid_a
-                contact["line_index_a"] = lidx_a
-                contact["grid_b"] = gid_b
-                contact["line_index_b"] = lidx_b
-                contact["zone_a"] = prim_roles[gp_a]
-                contact["zone_b"] = prim_roles[gp_b]
-                cross_grid_line_to_line_contacts.append(contact)
-                continue
-
             gu, gv, box_gap = _uv_box_gap(uv_boxes[gp_a], uv_boxes[gp_b])
-            if box_gap <= cfg.proximity_radius_in_S * max(1e-6, s_pair):
+
+            if is_nb or box_gap <= cfg.near_touch_in_S * max(1e-6, s_pair) + 1e-6:
+                contact = _compute_pair_contact(
+                    gp_a, gp_b, pa, pb, None, None, gid_a, gid_b,
+                    uv_boxes, u_vec, v_vec, is_nb, s_pair, cfg
+                )
+                if contact is not None:
+                    contact["grid_a"] = gid_a
+                    contact["line_index_a"] = lidx_a
+                    contact["grid_b"] = gid_b
+                    contact["line_index_b"] = lidx_b
+                    contact["zone_a"] = prim_roles[gp_a]
+                    contact["zone_b"] = prim_roles[gp_b]
+                    cross_grid_line_to_line_contacts.append(contact)
+                    continue
+
+            exact_gap_px, _ = _convex_polygons_exact_distance(poly_xy[gp_a], poly_xy[gp_b])
+            if exact_gap_px <= cfg.proximity_radius_in_S * max(1e-6, s_pair):
                 uc_a, vc_a = _prim_uv_center(pa, u_vec, v_vec)
                 uc_b, vc_b = _prim_uv_center(pb, u_vec, v_vec)
                 du_s = (uc_b - uc_a) / max(1e-6, s_pair)
@@ -2340,9 +2408,12 @@ def analyze_layer3a(
                     "line_index_b": lidx_b,
                     "zone_a": prim_roles[gp_a],
                     "zone_b": prim_roles[gp_b],
+                    "distance_precision": "exact_oriented_rectangle_polygon",
                     "s_ref_px": round(s_pair, 3),
                     "du_a_to_b_in_S": round(du_s, 3),
                     "dv_a_to_b_in_S": round(dv_s, 3),
+                    "exact_gap_px": round(exact_gap_px, 3),
+                    "exact_gap_in_S": round(exact_gap_px / max(1e-6, s_pair), 3),
                     "box_gap_u_in_S": round(gu / max(1e-6, s_pair), 3),
                     "box_gap_v_in_S": round(gv / max(1e-6, s_pair), 3),
                     "box_gap_in_S": round(box_gap / max(1e-6, s_pair), 3),
@@ -2371,17 +2442,24 @@ def analyze_layer3a(
         "graph_contract": {
             "neighbor_graph_symmetrized": True,
             "upstream_unilateral_neighbor_edges_repaired": asym_edge_count,
+            "frame_orthonormalized_for_metric": True,
+            "proximity_inclusion_metric": "exact_xy_convex_polygon_distance",
             "pair_coverage_scope": {
-                "non_line_to_non_line": "exhaustive_within_proximity_radius_in_S_plus_all_neighbor_edges",
-                "non_line_to_grid_line": "exhaustive_intra_and_cross_grid_within_proximity_radius_in_S_plus_all_neighbor_edges",
-                "grid_line_to_grid_line_cross_grid": "exhaustive_within_proximity_radius_in_S_plus_all_neighbor_edges",
+                "non_line_to_non_line": "all_pairs_with_exact_xy_gap_le_proximity_radius_in_S_plus_all_neighbor_edges",
+                "non_line_to_grid_line": "all_intra_and_cross_grid_pairs_with_exact_xy_gap_le_proximity_radius_in_S_plus_all_neighbor_edges",
+                "grid_line_to_grid_line_cross_grid": "all_pairs_with_exact_xy_gap_le_proximity_radius_in_S_plus_all_neighbor_edges",
                 "grid_line_to_grid_line_same_grid": "modeled_parametrically_in_grid_metrics_with_domain_order_check",
             },
             "pair_ordering": "canonical_undirected_prim_a_lt_prim_b",
             "vector_orientation": "directed_from_prim_a_to_prim_b_inverse_by_sign_flip",
             "ribbon_bbox_model": "exact_oriented_rectangle_perpendicular_width_only",
             "degenerate_bbox_handling": "exact_point_and_segment_polygon_distance",
-            "collinearity_taxonomy": ["collinear_overlap", "near_collinear_overlap", "parallel_side_by_side"],
+            "collinearity_taxonomy": [
+                "collinear_overlap",
+                "shallow_crossing",
+                "near_collinear_overlap",
+                "parallel_side_by_side",
+            ],
             "cell_partition_guarantee": "contiguous_partition_of_grid_u_span_within_tolerance",
             "cell_continuity_tol_px": cfg.cell_continuity_tol_px,
             "distance_precisions": [
@@ -2393,7 +2471,7 @@ def analyze_layer3a(
         "config": asdict(cfg),
         "source_image": layer1.get("image"),
         "upstream_gates": gate_report,
-        "page_frame": pf,
+        "page_frame": {**pf, "orthonormal_metric_frame": frame_ortho_meta},
         "audit_verification": {
             "total_primitives_expected": len(expected_pids),
             "primitives_assigned_exactly_once": len(prim_assign_count),
@@ -2447,9 +2525,6 @@ def analyze_layer3a(
     }
 
 
-# ---------------------------------------------------------------------------
-# 6. Vizualizări debug Strat 3A (3 imagini pur geometrice)
-# ---------------------------------------------------------------------------
 def _load_canvas(layer1: Dict[str, Any], image_override: Optional[str]) -> np.ndarray:
     img_path = image_override or layer1.get("image")
     if img_path and Path(img_path).exists():
@@ -2484,9 +2559,9 @@ def draw_debug_layer3a(
     by_id = {int(p["id"]): p for p in layer1["primitives"]}
     base = _load_canvas(layer1, image_override)
     font = cv2.FONT_HERSHEY_SIMPLEX
-    pf = layer3a["page_frame"]
-    u_vec = np.array(pf["u_axis"], dtype=np.float64)
-    v_vec = np.array(pf["v_axis"], dtype=np.float64)
+    ortho = layer3a["page_frame"]["orthonormal_metric_frame"]
+    u_vec = np.array(ortho["u_axis_orthonormal"], dtype=np.float64)
+    v_vec = np.array(ortho["v_axis_orthonormal"], dtype=np.float64)
 
     p1 = out_dir / "debug_l3a_1_grid_metric_support.png"
     p2 = out_dir / "debug_l3a_2_contacts_geometry.png"
@@ -2499,10 +2574,19 @@ def draw_debug_layer3a(
         um = 0.5 * (u0 + u1)
         line_col = (235, 220, 0) if m["domain_order_valid"] else (0, 0, 250)
         for lm in m["lines"]:
-            lv, sl = lm["v_at_mid"], lm["slope_dv_du"]
-            pt0 = _uv_to_xy(u0, lv + sl * (u0 - um), u_vec, v_vec)
-            pt1 = _uv_to_xy(u1, lv + sl * (u1 - um), u_vec, v_vec)
-            cv2.line(v1, (int(pt0[0]), int(pt0[1])), (int(pt1[0]), int(pt1[1])), (0, 175, 220), 1, cv2.LINE_AA)
+            ku = lm.get("knots_u", [])
+            kv = lm.get("knots_v", [])
+            if len(ku) >= 2 and len(ku) == len(kv):
+                pts_curve = np.array(
+                    [_uv_to_xy(float(u_k), float(v_k), u_vec, v_vec) for u_k, v_k in zip(ku, kv)],
+                    dtype=np.int32,
+                ).reshape(-1, 1, 2)
+                cv2.polylines(v1, [pts_curve], False, (0, 175, 220), 1, cv2.LINE_AA)
+            else:
+                lv, sl = lm["v_at_mid"], lm["slope_dv_du"]
+                pt0 = _uv_to_xy(u0, lv + sl * (u0 - um), u_vec, v_vec)
+                pt1 = _uv_to_xy(u1, lv + sl * (u1 - um), u_vec, v_vec)
+                cv2.line(v1, (int(pt0[0]), int(pt0[1])), (int(pt1[0]), int(pt1[1])), (0, 175, 220), 1, cv2.LINE_AA)
             for pid in lm["segment_primitive_ids"]:
                 _draw_prim(v1, by_id[pid], line_col, 2)
         for cell in g["cells"]:
@@ -2527,7 +2611,7 @@ def draw_debug_layer3a(
             ca = (int(round(pa["center"][0])), int(round(pa["center"][1])))
             cb = (int(round(pb["center"][0])), int(round(pb["center"][1])))
             geom = c.get("contact_geometry", c.get("attach_zone_on_ribbon", "contact"))
-            if geom in ("interior_to_interior_crossing", "interior"):
+            if geom in ("interior_to_interior_crossing", "shallow_crossing", "interior"):
                 col = (0, 0, 245)
             elif geom in ("collinear_overlap", "near_collinear_overlap"):
                 col = (255, 0, 255)
@@ -2540,7 +2624,7 @@ def draw_debug_layer3a(
             pa = by_id[glc["primitive_id"]]
             cv2.circle(v2, (int(round(pa["center"][0])), int(round(pa["center"][1]))), 3, (235, 220, 0), -1)
         for pr in g["spatial_proximities"]:
-            if pr["box_gap_in_S"] <= 1.5:
+            if pr["exact_gap_in_S"] <= 1.5:
                 pa, pb = by_id[pr["prim_a"]], by_id[pr["prim_b"]]
                 cv2.line(v2, (int(round(pa["center"][0])), int(round(pa["center"][1]))),
                          (int(round(pb["center"][0])), int(round(pb["center"][1]))), (210, 90, 210), 1, cv2.LINE_AA)
@@ -2601,14 +2685,12 @@ def process_layer3a(
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Stratul 3A v5.1 (Pur Geometric, 0% Muzică): poligoane exacte (inclusiv degenerate), graf global cu linii de grilă & audit count==1"
-    )
-    parser.add_argument("layer1_json", help="Fișierul *_geometry_layer1.json")
-    parser.add_argument("layer2_json", help="Fișierul *_geometry_layer2.json")
-    parser.add_argument("--out-dir", default="debug_l3a", help="Directorul de ieșire")
-    parser.add_argument("--image", default=None, help="Opțional: imaginea originală pentru overlay debug")
-    parser.add_argument("--prox-radius-s", type=float, default=3.0, help="Raza de proximitate spațială în unități S")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("layer1_json")
+    parser.add_argument("layer2_json")
+    parser.add_argument("--out-dir", default="debug_l3a")
+    parser.add_argument("--image", default=None)
+    parser.add_argument("--prox-radius-s", type=float, default=3.0)
     args = parser.parse_args(argv)
     try:
         cfg = Layer3AConfig(proximity_radius_in_S=args.prox_radius_s)
