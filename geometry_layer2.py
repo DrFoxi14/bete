@@ -17,47 +17,130 @@ def _angle_diff_180(a: float, b: float) -> float:
     return min(d, 180.0 - d)
 
 
+def _point_to_segment_xy(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> Tuple[float, float]:
+    abx = bx - ax
+    aby = by - ay
+    l2 = abx * abx + aby * aby
+    if l2 < 1e-12:
+        return math.hypot(px - ax, py - ay), 0.0
+    t = ((px - ax) * abx + (py - ay) * aby) / l2
+    if t < 0.0:
+        t = 0.0
+    elif t > 1.0:
+        t = 1.0
+    return math.hypot(px - (ax + t * abx), py - (ay + t * aby)), t
+
+
 def _point_to_segment(pt: np.ndarray, a: np.ndarray, b: np.ndarray) -> Tuple[float, float]:
-    ab = b - a
-    l2 = float(np.dot(ab, ab))
-    if l2 < 1e-9:
-        return float(np.linalg.norm(pt - a)), 0.0
-    t = float(np.clip(np.dot(pt - a, ab) / l2, 0.0, 1.0))
-    proj = a + t * ab
-    return float(np.linalg.norm(pt - proj)), t
+    return _point_to_segment_xy(float(pt[0]), float(pt[1]), float(a[0]), float(a[1]), float(b[0]), float(b[1]))
+
+
+def _segments_intersect_xy(
+    a0x: float, a0y: float, a1x: float, a1y: float,
+    b0x: float, b0y: float, b1x: float, b1y: float,
+) -> bool:
+    dax = a1x - a0x
+    day = a1y - a0y
+    dbx = b1x - b0x
+    dby = b1y - b0y
+    denom = dax * dby - day * dbx
+    if abs(denom) <= 1e-12:
+        return False
+    diffx = b0x - a0x
+    diffy = b0y - a0y
+    ta = (diffx * dby - diffy * dbx) / denom
+    if ta < 0.0 or ta > 1.0:
+        return False
+    tb = (diffx * day - diffy * dax) / denom
+    return 0.0 <= tb <= 1.0
+
+
+def _prim_poly_tuples(p: Dict[str, Any]) -> List[Tuple[float, float]]:
+    if p["type"] == "banda_dreapta":
+        ax, ay = float(p["start"][0]), float(p["start"][1])
+        bx, by = float(p["end"][0]), float(p["end"][1])
+        hw = 0.5 * float(p["width_px"])
+        dx, dy = bx - ax, by - ay
+        L = math.hypot(dx, dy)
+        if L > 1e-9:
+            nx, ny = -dy / L * hw, dx / L * hw
+            return [(ax + nx, ay + ny), (ax - nx, ay - ny), (bx - nx, by - ny), (bx + nx, by + ny)]
+        return [(ax - hw, ay - hw), (ax + hw, ay - hw), (ax + hw, ay + hw), (ax - hw, ay + hw)]
+    x0, y0, x1, y1 = [float(v) for v in p["bbox"]]
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+def _point_in_poly_xy(px: float, py: float, pts: Sequence[Tuple[float, float]]) -> bool:
+    eps = 1e-11
+    pos = False
+    neg = False
+    m = len(pts)
+    for i in range(m):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % m]
+        cross = (x1 - x0) * (py - y0) - (y1 - y0) * (px - x0)
+        if cross > eps:
+            pos = True
+        elif cross < -eps:
+            neg = True
+        if pos and neg:
+            return False
+    return True
+
+
+def _convex_poly_distance(pa: Sequence[Tuple[float, float]], pb: Sequence[Tuple[float, float]]) -> float:
+    na, nb = len(pa), len(pb)
+    ax0 = min(p[0] for p in pa)
+    ax1 = max(p[0] for p in pa)
+    ay0 = min(p[1] for p in pa)
+    ay1 = max(p[1] for p in pa)
+    bx0 = min(p[0] for p in pb)
+    bx1 = max(p[0] for p in pb)
+    by0 = min(p[1] for p in pb)
+    by1 = max(p[1] for p in pb)
+    if not (ax1 < bx0 - 1e-11 or bx1 < ax0 - 1e-11 or ay1 < by0 - 1e-11 or by1 < ay0 - 1e-11):
+        for i in range(na):
+            a0x, a0y = pa[i]
+            a1x, a1y = pa[(i + 1) % na]
+            for j in range(nb):
+                b0x, b0y = pb[j]
+                b1x, b1y = pb[(j + 1) % nb]
+                if _segments_intersect_xy(a0x, a0y, a1x, a1y, b0x, b0y, b1x, b1y):
+                    return 0.0
+        for p in pa:
+            if _point_in_poly_xy(p[0], p[1], pb):
+                return 0.0
+        for p in pb:
+            if _point_in_poly_xy(p[0], p[1], pa):
+                return 0.0
+    d_min = float("inf")
+    for px, py in pa:
+        for j in range(nb):
+            b0x, b0y = pb[j]
+            b1x, b1y = pb[(j + 1) % nb]
+            d, _ = _point_to_segment_xy(px, py, b0x, b0y, b1x, b1y)
+            if d < d_min:
+                d_min = d
+    for px, py in pb:
+        for i in range(na):
+            a0x, a0y = pa[i]
+            a1x, a1y = pa[(i + 1) % na]
+            d, _ = _point_to_segment_xy(px, py, a0x, a0y, a1x, a1y)
+            if d < d_min:
+                d_min = d
+    return 0.0 if d_min <= 1e-11 else d_min
 
 
 def _prim_uv_box(p: Dict[str, Any], u_vec: np.ndarray, v_vec: np.ndarray) -> Tuple[float, float, float, float]:
-    if p["type"] == "banda_dreapta":
-        a = np.array(p["start"], dtype=np.float64)
-        b = np.array(p["end"], dtype=np.float64)
-        hw = 0.5 * float(p["width_px"])
-        d = b - a
-        L = float(np.linalg.norm(d))
-        if L > 1e-9:
-            n = np.array([-d[1] / L, d[0] / L], dtype=np.float64)
-            corners = np.array([a + hw * n, a - hw * n, b - hw * n, b + hw * n], dtype=np.float64)
-        else:
-            corners = np.array([
-                [a[0] - hw, a[1] - hw], [a[0] + hw, a[1] - hw],
-                [a[0] + hw, a[1] + hw], [a[0] - hw, a[1] + hw],
-            ], dtype=np.float64)
-    else:
-        x0, y0, x1, y1 = [float(v) for v in p["bbox"]]
-        corners = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float64)
+    corners = np.array(_prim_poly_tuples(p), dtype=np.float64)
     us = corners @ u_vec
     vs = corners @ v_vec
     return float(np.min(us)), float(np.min(vs)), float(np.max(us)), float(np.max(vs))
 
 
 def _prim_xy_box(p: Dict[str, Any]) -> Tuple[float, float, float, float]:
-    if p["type"] == "banda_dreapta":
-        x0, y0 = float(p["start"][0]), float(p["start"][1])
-        x1, y1 = float(p["end"][0]), float(p["end"][1])
-        hw = 0.5 * float(p["width_px"])
-        return min(x0, x1) - hw, min(y0, y1) - hw, max(x0, x1) + hw, max(y0, y1) + hw
-    b = p["bbox"]
-    return float(b[0]), float(b[1]), float(b[2]), float(b[3])
+    pts = _prim_poly_tuples(p)
+    return min(x for x, _ in pts), min(y for _, y in pts), max(x for x, _ in pts), max(y for _, y in pts)
 
 
 def _prim_dist_to_point(pt: np.ndarray, p: Dict[str, Any]) -> float:
@@ -82,7 +165,7 @@ def _ribbon_touches_near_end(stick: Dict[str, Any], bridge: Dict[str, Any]) -> T
     half_sum = 0.5 * (float(stick["width_px"]) + float(bridge["width_px"]))
     gap_a = max(0.0, da - half_sum)
     gap_b = max(0.0, db - half_sum)
-    end_tol = max(4.0, 2.0 * float(bridge["width_px"]), 0.25 * float(stick["length_px"]))
+    end_tol = max(2.0 * float(bridge["width_px"]), 0.25 * float(stick["length_px"]))
     if gap_a <= gap_b:
         return gap_a <= end_tol, ta
     return gap_b <= end_tol, tb
@@ -128,11 +211,11 @@ def estimate_dominant_axis(primitives: Sequence[Dict[str, Any]]) -> Tuple[float,
 def _eval_comb_line(gs: Dict[str, Any], line_idx: int, u: float) -> float:
     us, vs = gs["us_v0"], gs["vs_v0"]
     if u <= us[0]:
-        sl = (vs[1] - vs[0]) / max(1e-6, us[1] - us[0]) if len(us) >= 2 else 0.0
+        sl = (vs[1] - vs[0]) / max(1e-9, us[1] - us[0]) if len(us) >= 2 else 0.0
         sl = max(-0.18, min(0.18, sl))
         v0 = float(vs[0] + sl * (u - us[0]))
     elif u >= us[-1]:
-        sl = (vs[-1] - vs[-2]) / max(1e-6, us[-1] - us[-2]) if len(us) >= 2 else 0.0
+        sl = (vs[-1] - vs[-2]) / max(1e-9, us[-1] - us[-2]) if len(us) >= 2 else 0.0
         sl = max(-0.18, min(0.18, sl))
         v0 = float(vs[-1] + sl * (u - us[-1]))
     else:
@@ -155,41 +238,31 @@ def _merged_len(ivs: List[Tuple[float, float]]) -> float:
     return tot + (b - a)
 
 
-def detect_periodic_grids(
-    primitives: Sequence[Dict[str, Any]],
+def _seg_v_at(s: Dict[str, Any], u: float) -> float:
+    du = s["ub"] - s["ua"]
+    if du < 1e-9:
+        return 0.5 * (s["va"] + s["vb"])
+    t = max(0.0, min(1.0, (u - s["ua"]) / du))
+    return s["va"] + t * (s["vb"] - s["va"])
+
+
+def _detect_grids_single_scale(
+    pool_aligned: Sequence[Dict[str, Any]],
+    page_v_span: float,
     theta_deg: float,
-    u_vec: np.ndarray,
-    v_vec: np.ndarray,
-) -> Tuple[List[Dict[str, Any]], set[int], Dict[int, Dict[str, Any]]]:
-    raw_aligned: List[Dict[str, Any]] = []
-    for p in primitives:
-        if p["type"] != "banda_dreapta":
-            continue
-        ang_d = _angle_diff_180(float(p["angle_deg"]), theta_deg)
-        if ang_d > 18.0:
-            continue
-        if float(p["elongation"]) < 2.5:
-            continue
-        pa = np.array(p["start"], dtype=np.float64)
-        pb = np.array(p["end"], dtype=np.float64)
-        ua, va = float(np.dot(pa, u_vec)), float(np.dot(pa, v_vec))
-        ub, vb = float(np.dot(pb, u_vec)), float(np.dot(pb, v_vec))
-        if ub < ua:
-            ua, ub, va, vb = ub, ua, vb, va
-        raw_aligned.append({
-            "id": int(p["id"]),
-            "ua": ua, "va": va, "ub": ub, "vb": vb,
-            "len": float(p["length_px"]), "w": float(p["width_px"]),
-            "ang_diff": ang_d,
-        })
+) -> Tuple[List[Dict[str, Any]], set[int], List[Dict[str, Any]]]:
+    if len(pool_aligned) < 6:
+        return [], set(), []
 
-    if len(raw_aligned) < 6:
-        return [], set(), {}
-
-    long_ws = sorted((s["w"], s["len"]) for s in raw_aligned if s["len"] >= 20.0 and s["ang_diff"] <= 8.0)
+    long_ws = sorted((s["w"], s["len"]) for s in pool_aligned if s["elong"] >= 8.0 and s["ang_diff"] <= 8.0)
     if not long_ws:
-        long_ws = sorted((s["w"], s["len"]) for s in raw_aligned)
+        long_ws = sorted((s["w"], s["len"]) for s in pool_aligned if s["elong"] >= 4.0)
+    if not long_ws:
+        long_ws = sorted((s["w"], s["len"]) for s in pool_aligned)
+
     tot_lw = sum(l for _, l in long_ws)
+    if tot_lw <= 0.0:
+        return [], set(), []
     acc = 0.0
     w_line = long_ws[0][0]
     for w_val, l_val in long_ws:
@@ -198,25 +271,21 @@ def detect_periodic_grids(
             w_line = w_val
             break
 
-    max_line_w = max(3.2, 1.65 * w_line)
-    seed_thin = [s for s in raw_aligned if s["w"] <= max_line_w and s["len"] >= 10.0]
-    thin = [s for s in raw_aligned if s["w"] <= max_line_w]
+    max_line_w = 1.70 * w_line
+    seed_thin = [s for s in pool_aligned if s["w"] <= max_line_w and s["elong"] >= 3.5]
+    thin = [s for s in pool_aligned if s["w"] <= max_line_w]
     if len(seed_thin) < 6:
-        return [], set(), {}
+        return [], set(), []
 
-    def seg_v_at(s: Dict[str, Any], u: float) -> float:
-        du = s["ub"] - s["ua"]
-        if du < 1e-6:
-            return 0.5 * (s["va"] + s["vb"])
-        t = max(0.0, min(1.0, (u - s["ua"]) / du))
-        return s["va"] + t * (s["vb"] - s["va"])
+    max_dv_limit = min(28.0 * w_line, max(20.0 * w_line, 0.20 * page_v_span))
+    min_dv_limit = 2.2 * w_line
 
     thin_u = sorted(seed_thin, key=lambda s: s["ua"])
     local_dvs: List[Tuple[float, float]] = []
     n_t = len(thin_u)
     for i in range(n_t):
         sa = thin_u[i]
-        if sa["len"] < max(10.0, 4.0 * w_line):
+        if sa["elong"] < 4.0:
             continue
         best_below = float("inf")
         best_w = 0.0
@@ -231,24 +300,24 @@ def detect_periodic_grids(
             ov_lo = max(sa["ua"], sb["ua"])
             ov_hi = min(sa["ub"], sb["ub"])
             ov = ov_hi - ov_lo
-            if ov < min(8.0, 0.35 * min(sa["len"], sb["len"])):
+            if ov < 0.35 * min(sa["len"], sb["len"]):
                 continue
             u_m = 0.5 * (ov_lo + ov_hi)
-            dv = seg_v_at(sb, u_m) - seg_v_at(sa, u_m)
-            if dv > max(3.5, 2.2 * w_line) and dv < best_below:
+            dv = _seg_v_at(sb, u_m) - _seg_v_at(sa, u_m)
+            if min_dv_limit < dv < best_below:
                 best_below = dv
                 best_w = ov
-        if best_below < 140.0:
+        if best_below < max_dv_limit:
             local_dvs.append((best_below, best_w))
 
     if len(local_dvs) < 4:
-        return [], set(), {}
+        return [], set(), []
 
     local_dvs.sort(key=lambda t: t[0])
     best_score = -1.0
     best_cluster: List[Tuple[float, float]] = []
     for g, _ in local_dvs:
-        tol = max(1.2, 0.14 * g)
+        tol = 0.14 * g
         cl = [(v, wt) for v, wt in local_dvs if abs(v - g) <= tol]
         sc = sum(wt for _, wt in cl)
         if sc > best_score:
@@ -265,14 +334,17 @@ def detect_periodic_grids(
             step_s = v_val
             break
 
+    if tot_cw < 4.0 * step_s:
+        return [], set(), []
+
     u_min_all = min(s["ua"] for s in seed_thin)
     u_max_all = max(s["ub"] for s in seed_thin)
-    slice_w = max(20.0, 3.5 * step_s)
+    slice_w = 3.5 * step_s
     slice_step = 0.5 * slice_w
-    n_slices = max(1, int(math.ceil((u_max_all - u_min_all) / slice_step)) + 1)
+    n_slices = max(1, int(math.ceil((u_max_all - u_min_all) / max(1e-9, slice_step))) + 1)
     slice_centers = [u_min_all + m * slice_step for m in range(n_slices)]
-    peak_tol = min(0.32 * step_s, max(1.8, 1.3 * w_line))
-    step_tol = max(2.0, 0.28 * step_s)
+    peak_tol = min(0.32 * step_s, 1.35 * w_line)
+    step_tol = 0.22 * step_s
 
     slice_combs: List[List[Dict[str, Any]]] = []
     for m_idx, u_m in enumerate(slice_centers):
@@ -286,8 +358,8 @@ def detect_periodic_grids(
             if ov <= 0.0:
                 continue
             u_eval = max(s["ua"], min(s["ub"], u_m))
-            sl_s = (s["vb"] - s["va"]) / max(1e-6, s["ub"] - s["ua"])
-            samples.append((seg_v_at(s, u_eval), ov, max(s["ua"], sl_lo), min(s["ub"], sl_hi), sl_s))
+            sl_s = (s["vb"] - s["va"]) / max(1e-9, s["ub"] - s["ua"])
+            samples.append((_seg_v_at(s, u_eval), ov, max(s["ua"], sl_lo), min(s["ub"], sl_hi), sl_s))
 
         if len(samples) < 3:
             slice_combs.append([])
@@ -303,19 +375,15 @@ def detect_periodic_grids(
             else:
                 tw = sum(x[1] for x in cur_pts)
                 peaks.append((
-                    sum(x[0] * x[1] for x in cur_pts) / tw,
-                    tw,
-                    min(x[2] for x in cur_pts),
-                    max(x[3] for x in cur_pts),
+                    sum(x[0] * x[1] for x in cur_pts) / tw, tw,
+                    min(x[2] for x in cur_pts), max(x[3] for x in cur_pts),
                     sum(x[4] * x[1] for x in cur_pts) / tw,
                 ))
                 cur_pts = [item]
         tw = sum(x[1] for x in cur_pts)
         peaks.append((
-            sum(x[0] * x[1] for x in cur_pts) / tw,
-            tw,
-            min(x[2] for x in cur_pts),
-            max(x[3] for x in cur_pts),
+            sum(x[0] * x[1] for x in cur_pts) / tw, tw,
+            min(x[2] for x in cur_pts), max(x[3] for x in cur_pts),
             sum(x[4] * x[1] for x in cur_pts) / tw,
         ))
 
@@ -433,17 +501,14 @@ def detect_periodic_grids(
             comb_tracks.append(tr)
 
     if not comb_tracks:
-        return [], set(), {}
+        return [], set(), []
 
-    track_spans = [tr["u_hi"] - tr["u_lo"] for tr in comb_tracks]
-    ref_span = float(np.percentile(track_spans, 85)) if track_spans else 0.0
     valid_tracks = [
         tr for tr in comb_tracks
-        if (tr["u_hi"] - tr["u_lo"]) >= max(4.0 * step_s, 0.25 * ref_span)
-        and len(tr["pts"]) >= 3
+        if (tr["u_hi"] - tr["u_lo"]) >= 4.0 * step_s and len(tr["pts"]) >= 2
     ]
     if not valid_tracks:
-        return [], set(), {}
+        return [], set(), []
 
     valid_tracks.sort(key=lambda tr: float(np.median([p[2] for p in tr["pts"]])))
 
@@ -481,10 +546,14 @@ def detect_periodic_grids(
             "u_lo_comb": float(tr["u_lo"]),
             "u_hi_comb": float(tr["u_hi"]),
             "line_pids": [[] for _ in line_offsets],
+            "step_est": step_s,
         })
 
-    end_tol = min(0.44 * step_s, max(2.8, 2.0 * w_line))
-    mean_tol = min(0.34 * step_s, max(2.4, 1.60 * w_line))
+    if not grid_specs:
+        return [], set(), []
+
+    end_tol = min(0.44 * step_s, 2.0 * w_line)
+    mean_tol = min(0.34 * step_s, 1.60 * w_line)
     assigned_pids: set[int] = set()
 
     for s in thin:
@@ -518,10 +587,10 @@ def detect_periodic_grids(
 
     seg_by_id = {s["id"]: s for s in thin}
     grids: List[Dict[str, Any]] = []
-    grid_curves_by_id: Dict[int, Dict[str, Any]] = {}
+    kept_specs: List[Dict[str, Any]] = []
 
     for gs in grid_specs:
-        g_span = max(1e-6, gs["u_hi_comb"] - gs["u_lo_comb"])
+        g_span = max(1e-9, gs["u_hi_comb"] - gs["u_lo_comb"])
         line_covs = [
             _merged_len([(seg_by_id[pid]["ua"], seg_by_id[pid]["ub"]) for pid in lp]) / g_span
             for lp in gs["line_pids"]
@@ -563,12 +632,45 @@ def detect_periodic_grids(
 
         u_lo = min(seg_by_id[pid]["ua"] for pid in all_p)
         u_hi = max(seg_by_id[pid]["ub"] for pid in all_p)
+        final_span = max(1e-9, u_hi - u_lo)
+        final_covs = [
+            _merged_len([(seg_by_id[pid]["ua"], seg_by_id[pid]["ub"]) for pid in lp]) / final_span
+            for lp in gs["line_pids"]
+        ]
+        strong_lines = sum(1 for c in final_covs if c >= 0.40)
+        tot_line_cov = sum(final_covs)
+        if final_span < 4.0 * step_s or strong_lines < 3 or tot_line_cov < 2.2:
+            for pid in all_p:
+                assigned_pids.discard(pid)
+            continue
+
+        all_p_set = set(all_p)
+        mid_spaces_hit = 0
+        for li in range(len(gs["line_offsets"]) - 1):
+            mid_ivs: List[Tuple[float, float]] = []
+            for s_cand in pool_aligned:
+                if s_cand["id"] in all_p_set or s_cand["w"] > max_line_w:
+                    continue
+                if s_cand["ub"] < u_lo or s_cand["ua"] > u_hi:
+                    continue
+                v_ma = 0.5 * (_eval_comb_line(gs, li, s_cand["ua"]) + _eval_comb_line(gs, li + 1, s_cand["ua"]))
+                v_mb = 0.5 * (_eval_comb_line(gs, li, s_cand["ub"]) + _eval_comb_line(gs, li + 1, s_cand["ub"]))
+                if max(abs(s_cand["va"] - v_ma), abs(s_cand["vb"] - v_mb)) <= 0.22 * step_s:
+                    ca, cb = max(u_lo, s_cand["ua"]), min(u_hi, s_cand["ub"])
+                    if cb > ca:
+                        mid_ivs.append((ca, cb))
+            if _merged_len(mid_ivs) / final_span >= 0.35:
+                mid_spaces_hit += 1
+        if mid_spaces_hit >= 2:
+            for pid in all_p:
+                assigned_pids.discard(pid)
+            continue
+
         u_mid = 0.5 * (u_lo + u_hi)
         line_vs = [_eval_comb_line(gs, li, u_mid) for li in range(len(gs["line_offsets"]))]
         steps = [line_vs[k + 1] - line_vs[k] for k in range(len(line_vs) - 1)]
-        gid = len(grids) + 1
         grids.append({
-            "grid_id": gid,
+            "grid_id": 0,
             "line_count": len(gs["line_offsets"]),
             "step_px": round(float(np.median(steps)), 2),
             "angle_deg": round(theta_deg, 2),
@@ -578,9 +680,71 @@ def detect_periodic_grids(
             "line_primitive_ids": [sorted(lp) for lp in gs["line_pids"]],
             "primitive_ids": all_p,
         })
-        grid_curves_by_id[gid] = gs
+        kept_specs.append(gs)
 
-    return grids, assigned_pids, grid_curves_by_id
+    return grids, assigned_pids, kept_specs
+
+
+def detect_periodic_grids(
+    primitives: Sequence[Dict[str, Any]],
+    theta_deg: float,
+    u_vec: np.ndarray,
+    v_vec: np.ndarray,
+) -> Tuple[List[Dict[str, Any]], set[int], Dict[int, Dict[str, Any]]]:
+    raw_aligned: List[Dict[str, Any]] = []
+    all_vs: List[float] = []
+    for p in primitives:
+        if p["type"] == "banda_dreapta":
+            pa = np.array(p["start"], dtype=np.float64)
+            pb = np.array(p["end"], dtype=np.float64)
+            ua, va = float(np.dot(pa, u_vec)), float(np.dot(pa, v_vec))
+            ub, vb = float(np.dot(pb, u_vec)), float(np.dot(pb, v_vec))
+            all_vs.extend([va, vb])
+            ang_d = _angle_diff_180(float(p["angle_deg"]), theta_deg)
+            if ang_d > 18.0 or float(p["elongation"]) < 2.5:
+                continue
+            if ub < ua:
+                ua, ub, va, vb = ub, ua, vb, va
+            raw_aligned.append({
+                "id": int(p["id"]),
+                "ua": ua, "va": va, "ub": ub, "vb": vb,
+                "len": float(p["length_px"]), "w": float(p["width_px"]),
+                "elong": float(p["elongation"]), "ang_diff": ang_d,
+            })
+        else:
+            b = p["bbox"]
+            for x in (float(b[0]), float(b[2])):
+                for y in (float(b[1]), float(b[3])):
+                    all_vs.append(x * float(v_vec[0]) + y * float(v_vec[1]))
+
+    if len(raw_aligned) < 6 or not all_vs:
+        return [], set(), {}
+
+    page_v_span = max(1e-6, max(all_vs) - min(all_vs))
+    all_grids: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    assigned_total: set[int] = set()
+    remaining = raw_aligned
+
+    for _scale_pass in range(4):
+        found_grids, found_pids, found_specs = _detect_grids_single_scale(remaining, page_v_span, theta_deg)
+        if not found_grids:
+            break
+        for g, sp in zip(found_grids, found_specs):
+            all_grids.append((g, sp))
+        assigned_total.update(found_pids)
+        remaining = [s for s in remaining if s["id"] not in assigned_total]
+        if len(remaining) < 6:
+            break
+
+    all_grids.sort(key=lambda pair: (pair[0]["v_span"][0], pair[0]["u_span"][0]))
+    grids_out: List[Dict[str, Any]] = []
+    grid_curves_by_id: Dict[int, Dict[str, Any]] = {}
+    for gid, (g, sp) in enumerate(all_grids, start=1):
+        g["grid_id"] = gid
+        grids_out.append(g)
+        grid_curves_by_id[gid] = sp
+
+    return grids_out, assigned_total, grid_curves_by_id
 
 
 def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
@@ -604,22 +768,32 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
 
     theta_deg, u_vec, v_vec = estimate_dominant_axis(primitives)
     uv_boxes = {pid: _prim_uv_box(p, u_vec, v_vec) for pid, p in by_id.items()}
+    poly_xy = {pid: _prim_poly_tuples(p) for pid, p in by_id.items()}
 
     grids, grid_pids, grid_curves = detect_periodic_grids(primitives, theta_deg, u_vec, v_vec)
     page_step = float(np.median([g["step_px"] for g in grids])) if grids else None
-    s_default = page_step if page_step else 12.0
+    if page_step is not None:
+        s_default = page_step
+    elif primitives:
+        med_dim = float(np.median([max(float(p["length_px"]), float(p["width_px"])) for p in primitives]))
+        s_default = max(1e-6, med_dim)
+    else:
+        s_default = 1.0
 
     def grid_v_span_at(g: Dict[str, Any], u_val: float) -> Tuple[float, float]:
         gs = grid_curves[g["grid_id"]]
         return _eval_comb_line(gs, 0, u_val), _eval_comb_line(gs, len(gs["line_offsets"]) - 1, u_val)
 
-    def overlapping_grids(u0: float, v0: float, u1: float, v1: float, margin_u: float = 0.0, margin_v: float = 0.0) -> List[int]:
-        res = []
+    def prim_overlapping_grids(pid: int) -> List[int]:
+        u0, v0, u1, v1 = uv_boxes[pid]
         um = 0.5 * (u0 + u1)
+        res = []
         for g in grids:
+            gs_step = float(g["step_px"])
             gu0, gu1 = g["u_span"]
             gv0, gv1 = grid_v_span_at(g, um)
-            if u1 >= gu0 - margin_u and u0 <= gu1 + margin_u and v1 >= gv0 - margin_v and v0 <= gv1 + margin_v:
+            if (u1 >= gu0 - 0.15 * gs_step and u0 <= gu1 + 0.15 * gs_step and
+                    v1 >= gv0 - 0.75 * gs_step and v0 <= gv1 + 0.75 * gs_step):
                 res.append(g["grid_id"])
         return res
 
@@ -665,6 +839,7 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
     bar_pids_by_mol: Dict[int, List[int]] = defaultdict(list)
 
     if grids:
+        max_bar_s = max(float(g["step_px"]) for g in grids)
         verts = []
         for pid in non_grid_ids:
             p = by_id[pid]
@@ -672,10 +847,10 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             if not (74.0 <= _angle_diff_180(float(p["angle_deg"]), theta_deg) <= 106.0):
                 continue
-            if float(p["width_px"]) > 0.55 * s_default or float(p["elongation"]) < 2.5:
+            if float(p["width_px"]) > 0.55 * max_bar_s or float(p["elongation"]) < 2.5:
                 continue
             u0, v0, u1, v1 = uv_boxes[pid]
-            verts.append({"id": pid, "u": 0.5 * (u0 + u1), "v0": v0, "v1": v1})
+            verts.append({"id": pid, "u": 0.5 * (u0 + u1), "v0": v0, "v1": v1, "w": float(p["width_px"])})
 
         bar_pid_spanned: Dict[int, set[int]] = defaultdict(set)
         bar_pid_group: Dict[int, int] = {}
@@ -687,6 +862,8 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
             u0_g, u1_g = g["u_span"]
             cands = []
             for vr in verts:
+                if vr["w"] > 0.55 * S_g:
+                    continue
                 if vr["u"] < u0_g - 1.2 * S_g or vr["u"] > u1_g + 1.2 * S_g:
                     continue
                 gv0, gv1 = grid_v_span_at(g, vr["u"])
@@ -697,7 +874,7 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
             cands.sort(key=lambda x: x["u"])
             clusters: List[List[Dict[str, Any]]] = []
             for vr in cands:
-                if clusters and abs(vr["u"] - clusters[-1][0]["u"]) <= max(3.5, 0.30 * S_g):
+                if clusters and abs(vr["u"] - clusters[-1][0]["u"]) <= 0.30 * S_g:
                     clusters[-1].append(vr)
                 else:
                     clusters.append([vr])
@@ -705,7 +882,7 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
             for cl in clusters:
                 u_m = float(np.mean([x["u"] for x in cl]))
                 gv0, gv1 = grid_v_span_at(g, u_m)
-                gh = max(1e-6, gv1 - gv0)
+                gh = max(1e-9, gv1 - gv0)
                 v_lo = min(x["v0"] for x in cl)
                 v_hi = max(x["v1"] for x in cl)
                 ivs = sorted([
@@ -758,10 +935,150 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
                 "angle_deg": s["angle_deg"],
             })
 
-    molecules: List[Dict[str, Any]] = []
+    mol_zone: Dict[int, str] = {}
+    mol_grids: Dict[int, List[int]] = {}
+    for mid, comp in enumerate(raw_molecules, start=1):
+        touched_grid_prims = {
+            int(nb) for i in comp for nb in by_id[i].get("neighbors", []) if int(nb) in grid_pids
+        }
+        ov_g: set[int] = set()
+        for pid in comp:
+            ov_g.update(prim_overlapping_grids(pid))
+        in_grids = sorted(ov_g)
+        mol_grids[mid] = in_grids
+        mol_zone[mid] = "pe_grila" if (touched_grid_prims or in_grids or mid in bar_pids_by_mol) else "coridor_liber"
+
+    non_bar_ids = [pid for pid in non_grid_ids if pid not in bar_pids_found]
+    touch_adj: Dict[int, set[int]] = {pid: set(nb for nb in adj[pid] if nb not in bar_pids_found) for pid in non_bar_ids}
+    near_touch_tol = 0.25 * s_default
+    sorted_nb_u = sorted(non_bar_ids, key=lambda pid: uv_boxes[pid][0])
+    n_nb = len(sorted_nb_u)
+    for i in range(n_nb):
+        pi = sorted_nb_u[i]
+        bi = uv_boxes[pi]
+        for j in range(i + 1, n_nb):
+            pj = sorted_nb_u[j]
+            bj = uv_boxes[pj]
+            if bj[0] - bi[2] > near_touch_tol:
+                break
+            if bj[1] - bi[3] > near_touch_tol or bi[1] - bj[3] > near_touch_tol:
+                continue
+            if pj in touch_adj[pi]:
+                continue
+            if _convex_poly_distance(poly_xy[pi], poly_xy[pj]) <= near_touch_tol:
+                touch_adj[pi].add(pj)
+                touch_adj[pj].add(pi)
+
     parallel_bridges: List[Dict[str, Any]] = []
     anchored_sticks: List[Dict[str, Any]] = []
+    bridge_ids_global: set[int] = set()
+    bridged_stick_ids_global: set[int] = set()
+    bridges_by_mol: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    anchors_by_mol: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
 
+    min_bridge_len = 1.1 * s_default
+
+    for cid in non_bar_ids:
+        cand = by_id[cid]
+        if cand["type"] != "banda_dreapta":
+            continue
+        if float(cand["elongation"]) < 2.8 or float(cand["length_px"]) < min_bridge_len:
+            continue
+        mid = prim_to_mol_id[cid]
+        c_gids = mol_grids[mid]
+        s_loc = float(np.median([grids[g - 1]["step_px"] for g in c_gids])) if c_gids else s_default
+        nb_hits: List[Tuple[Dict[str, Any], float]] = []
+        for nb in touch_adj[cid]:
+            nb_obj = by_id[nb]
+            if nb_obj["type"] != "banda_dreapta":
+                continue
+            if float(nb_obj["elongation"]) < 2.8 or float(nb_obj["length_px"]) < 0.9 * s_loc:
+                continue
+            if _angle_diff_180(float(cand["angle_deg"]), float(nb_obj["angle_deg"])) < 28.0:
+                continue
+            ok_end, t_on_br = _ribbon_touches_near_end(nb_obj, cand)
+            if ok_end:
+                nb_hits.append((nb_obj, t_on_br))
+        if len(nb_hits) < 2:
+            continue
+        best_grp: List[Tuple[Dict[str, Any], float]] = []
+        for a_i in range(len(nb_hits)):
+            grp = [nb_hits[a_i]]
+            for b_i in range(len(nb_hits)):
+                if a_i != b_i and _angle_diff_180(
+                    float(nb_hits[a_i][0]["angle_deg"]), float(nb_hits[b_i][0]["angle_deg"])
+                ) <= 22.0:
+                    grp.append(nb_hits[b_i])
+            if len(grp) > len(best_grp):
+                best_grp = grp
+        if len(best_grp) >= 2:
+            ts = [t_val for _, t_val in best_grp]
+            sep_along_px = (max(ts) - min(ts)) * float(cand["length_px"])
+            if sep_along_px < 0.50 * s_loc:
+                continue
+            bridge_ids_global.add(cid)
+            p_ids = sorted(int(x[0]["id"]) for x in best_grp)
+            bridged_stick_ids_global.update(p_ids)
+            b_rec = {
+                "molecule_id": mid,
+                "bridge_id": cid,
+                "bridge_primitive_id": cid,
+                "bridge_width_px": cand["width_px"],
+                "bridge_angle_deg": cand["angle_deg"],
+                "connected_parallel_ids": p_ids,
+                "zone": mol_zone[mid],
+                "grid_ids": c_gids,
+            }
+            parallel_bridges.append(b_rec)
+            bridges_by_mol[mid].append(b_rec)
+
+    for sid in non_bar_ids:
+        if sid in bridge_ids_global:
+            continue
+        s = by_id[sid]
+        if s["type"] != "banda_dreapta" or float(s["elongation"]) < 2.5:
+            continue
+        mid = prim_to_mol_id[sid]
+        s_gids = mol_grids[mid]
+        s_loc = float(np.median([grids[g - 1]["step_px"] for g in s_gids])) if s_gids else s_default
+        pa = np.array(s["start"], dtype=np.float64)
+        pb = np.array(s["end"], dtype=np.float64)
+        tol_end = max(2.5 * float(s["width_px"]), 0.35 * float(s["length_px"]))
+        end_a_att: List[int] = []
+        end_b_att: List[int] = []
+        mid_att: List[int] = []
+        for nb in touch_adj[sid]:
+            np_obj = by_id[nb]
+            if not (np_obj["type"] in ("pata_compacta", "banda_curba") or is_blob_like(np_obj, s_loc)):
+                continue
+            da = _prim_dist_to_point(pa, np_obj)
+            db = _prim_dist_to_point(pb, np_obj)
+            if da <= db and da <= tol_end:
+                end_a_att.append(nb)
+            elif db < da and db <= tol_end:
+                end_b_att.append(nb)
+            else:
+                mid_att.append(nb)
+        if end_a_att or end_b_att:
+            a_rec = {
+                "molecule_id": mid,
+                "stick_id": sid,
+                "start_A": s["start"],
+                "end_B": s["end"],
+                "length_px": s["length_px"],
+                "width_px": s["width_px"],
+                "angle_deg": s["angle_deg"],
+                "on_bridge": sid in bridged_stick_ids_global,
+                "end_A_attachments": sorted(end_a_att),
+                "end_B_attachments": sorted(end_b_att),
+                "mid_attachments": sorted(mid_att),
+                "zone": mol_zone[mid],
+                "grid_ids": s_gids,
+            }
+            anchored_sticks.append(a_rec)
+            anchors_by_mol[mid].append(a_rec)
+
+    molecules: List[Dict[str, Any]] = []
     for mid, comp in enumerate(raw_molecules, start=1):
         mu0 = min(uv_boxes[i][0] for i in comp)
         mv0 = min(uv_boxes[i][1] for i in comp)
@@ -769,127 +1086,12 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
         mv1 = max(uv_boxes[i][3] for i in comp)
         m_w, m_h = mu1 - mu0, mv1 - mv0
 
-        touched_grid_prims = sorted({
-            int(nb) for i in comp for nb in by_id[i].get("neighbors", []) if int(nb) in grid_pids
-        })
-        in_grids = overlapping_grids(
-            mu0, mv0, mu1, mv1,
-            margin_u=0.25 * s_default if grids else 0.0,
-            margin_v=0.75 * s_default if grids else 0.0,
-        )
-        is_spine_artifact = (not touched_grid_prims) and (len(in_grids) >= 3) and (m_h > 25.0 * s_default)
-        if is_spine_artifact:
-            in_grids = []
-        zone = "pe_grila" if (touched_grid_prims or in_grids or mid in bar_pids_by_mol) else "coridor_liber"
-
         straights = [by_id[i] for i in comp if by_id[i]["type"] == "banda_dreapta"]
         spots = [by_id[i] for i in comp if by_id[i]["type"] == "pata_compacta"]
         curves = [by_id[i] for i in comp if by_id[i]["type"] == "banda_curba"]
         local_bar_pids = bar_pids_by_mol.get(mid, [])
-
-        bridge_ids: set[int] = set()
-        bridged_stick_ids: set[int] = set()
-        local_bridges: List[Dict[str, Any]] = []
-        non_bar_straights = [s for s in straights if int(s["id"]) not in bar_pids_found]
-        min_bridge_len = max(12.0, 1.1 * s_default)
-        min_stick_len = max(10.0, 0.9 * s_default)
-
-        if len(non_bar_straights) >= 3:
-            for cand in non_bar_straights:
-                cid = int(cand["id"])
-                if float(cand["elongation"]) < 2.8 or float(cand["length_px"]) < min_bridge_len:
-                    continue
-                nb_hits: List[Tuple[Dict[str, Any], float]] = []
-                for nb in adj[cid]:
-                    if nb in bar_pids_found:
-                        continue
-                    nb_obj = by_id[nb]
-                    if nb_obj["type"] != "banda_dreapta":
-                        continue
-                    if float(nb_obj["elongation"]) < 2.8 or float(nb_obj["length_px"]) < min_stick_len:
-                        continue
-                    if _angle_diff_180(float(cand["angle_deg"]), float(nb_obj["angle_deg"])) < 28.0:
-                        continue
-                    ok_end, t_on_br = _ribbon_touches_near_end(nb_obj, cand)
-                    if ok_end:
-                        nb_hits.append((nb_obj, t_on_br))
-                if len(nb_hits) < 2:
-                    continue
-                best_grp: List[Tuple[Dict[str, Any], float]] = []
-                for a_i in range(len(nb_hits)):
-                    grp = [nb_hits[a_i]]
-                    for b_i in range(len(nb_hits)):
-                        if a_i != b_i and _angle_diff_180(
-                            float(nb_hits[a_i][0]["angle_deg"]), float(nb_hits[b_i][0]["angle_deg"])
-                        ) <= 22.0:
-                            grp.append(nb_hits[b_i])
-                    if len(grp) > len(best_grp):
-                        best_grp = grp
-                if len(best_grp) >= 2:
-                    ts = [t_val for _, t_val in best_grp]
-                    sep_along_px = (max(ts) - min(ts)) * float(cand["length_px"])
-                    if sep_along_px < 0.50 * s_default:
-                        continue
-                    bridge_ids.add(cid)
-                    p_ids = sorted(int(x[0]["id"]) for x in best_grp)
-                    bridged_stick_ids.update(p_ids)
-                    local_bridges.append({
-                        "molecule_id": mid,
-                        "bridge_id": cid,
-                        "bridge_primitive_id": cid,
-                        "bridge_width_px": cand["width_px"],
-                        "bridge_angle_deg": cand["angle_deg"],
-                        "connected_parallel_ids": p_ids,
-                        "zone": zone,
-                        "grid_ids": in_grids,
-                    })
-
-        local_anchored: List[Dict[str, Any]] = []
-        for s in non_bar_straights:
-            sid = int(s["id"])
-            if sid in bridge_ids or float(s["elongation"]) < 2.5:
-                continue
-            pa = np.array(s["start"], dtype=np.float64)
-            pb = np.array(s["end"], dtype=np.float64)
-            tol_end = max(4.0, 2.5 * float(s["width_px"]), 0.35 * float(s["length_px"]))
-            end_a_att: List[int] = []
-            end_b_att: List[int] = []
-            mid_att: List[int] = []
-            for nb in adj[sid]:
-                np_obj = by_id[nb]
-                is_anchor_target = (
-                    np_obj["type"] in ("pata_compacta", "banda_curba")
-                    or is_blob_like(np_obj, s_default)
-                )
-                if not is_anchor_target:
-                    continue
-                da = _prim_dist_to_point(pa, np_obj)
-                db = _prim_dist_to_point(pb, np_obj)
-                if da <= db and da <= tol_end:
-                    end_a_att.append(nb)
-                elif db < da and db <= tol_end:
-                    end_b_att.append(nb)
-                else:
-                    mid_att.append(nb)
-            if end_a_att or end_b_att:
-                local_anchored.append({
-                    "molecule_id": mid,
-                    "stick_id": sid,
-                    "start_A": s["start"],
-                    "end_B": s["end"],
-                    "length_px": s["length_px"],
-                    "width_px": s["width_px"],
-                    "angle_deg": s["angle_deg"],
-                    "on_bridge": sid in bridged_stick_ids,
-                    "end_A_attachments": sorted(end_a_att),
-                    "end_B_attachments": sorted(end_b_att),
-                    "mid_attachments": sorted(mid_att),
-                    "zone": zone,
-                    "grid_ids": in_grids,
-                })
-
-        parallel_bridges.extend(local_bridges)
-        anchored_sticks.extend(local_anchored)
+        local_bridges = bridges_by_mol.get(mid, [])
+        local_anchored = anchors_by_mol.get(mid, [])
 
         if len(local_bar_pids) == 1 and len(comp) == 1:
             mtype = "bara_transversala_grila"
@@ -910,8 +1112,8 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
         molecules.append({
             "molecule_id": mid,
             "type": mtype,
-            "zone": zone,
-            "grid_ids": in_grids,
+            "zone": mol_zone[mid],
+            "grid_ids": mol_grids[mid],
             "primitive_ids": comp,
             "primitive_count": len(comp),
             "uv_bbox": [round(mu0, 2), round(mv0, 2), round(mu1, 2), round(mv1, 2)],
@@ -935,33 +1137,38 @@ def analyze_layer2(layer1: Dict[str, Any]) -> Dict[str, Any]:
     ]
     rows: List[Dict[str, Any]] = []
     if len(row_cands) >= 3:
+        cand_hs = [m["v_span_px"] for m in row_cands if m["v_span_px"] > 0.15 * s_default]
+        global_med_h = float(np.median(cand_hs)) if cand_hs else s_default
         row_cands.sort(key=lambda m: 0.5 * (m["uv_bbox"][1] + m["uv_bbox"][3]))
         bands: List[List[Dict[str, Any]]] = []
         for m in row_cands:
             mv0, mv1 = m["uv_bbox"][1], m["uv_bbox"][3]
-            mh = max(1.0, mv1 - mv0)
-            placed = False
+            mvc = 0.5 * (mv0 + mv1)
+            mh = max(1e-6, mv1 - mv0)
+            best_band = None
+            best_dv = float("inf")
             for band in bands:
-                bv0 = min(x["uv_bbox"][1] for x in band)
-                bv1 = max(x["uv_bbox"][3] for x in band)
-                bh = max(1.0, bv1 - bv0)
-                tol = 0.35 * max(bh, mh)
-                if mv0 <= bv1 + tol and mv1 >= bv0 - tol:
-                    b_vc = float(np.median([0.5 * (x["uv_bbox"][1] + x["uv_bbox"][3]) for x in band]))
-                    if abs(0.5 * (mv0 + mv1) - b_vc) <= 0.75 * max(bh, mh) + 3.0:
-                        band.append(m)
-                        placed = True
-                        break
-            if not placed:
+                b_vcs = [0.5 * (x["uv_bbox"][1] + x["uv_bbox"][3]) for x in band]
+                b_hs = [max(1e-6, x["uv_bbox"][3] - x["uv_bbox"][1]) for x in band]
+                b_vc = float(np.median(b_vcs))
+                b_mh = float(np.median(b_hs))
+                ref_h = max(b_mh, min(mh, 2.0 * global_med_h))
+                dv = abs(mvc - b_vc)
+                if dv <= 0.60 * ref_h + 0.15 * global_med_h and dv < best_dv:
+                    best_dv = dv
+                    best_band = band
+            if best_band is not None:
+                best_band.append(m)
+            else:
                 bands.append([m])
 
         for band in bands:
             if len(band) < 3:
                 continue
             band.sort(key=lambda m: m["uv_bbox"][0])
-            heights = [m["v_span_px"] for m in band if m["v_span_px"] >= 3.0]
-            med_h = float(np.median(heights)) if heights else 10.0
-            max_gap = max(35.0, 4.5 * med_h)
+            heights = [m["v_span_px"] for m in band if m["v_span_px"] >= 0.20 * global_med_h]
+            med_h = float(np.median(heights)) if heights else global_med_h
+            max_gap = 4.5 * med_h
 
             runs: List[List[Dict[str, Any]]] = [[band[0]]]
             for m in band[1:]:
