@@ -19,6 +19,8 @@ from bete_engine_page2 import process_image as process_image_page2
 from bete_engine_page3 import process_image as process_image_page3
 from geometry_layer2 import process_layer1_json
 from geometry_layer3a_v51 import process_layer3a
+from geometry_layer2_gemini import process_layer1_json as process_layer1_json_gemini
+from geometry_layer3a_gemini import process_layer3a as process_layer3a_gemini
 
 ROOT = Path(__file__).resolve().parent
 WEB_FILE = ROOT / "index.html"
@@ -73,7 +75,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             self._send_bytes(200, WEB_FILE.read_bytes(), "text/html; charset=utf-8")
             return
         if parsed.path == "/api/health":
-            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py", "3": "Straturile 0 + 1 + 2 + Geometry Layer 3A v5.1"}})
+            self._send_json(200, {"ok": True, "engines": {"1": "bete_engine.py", "2": "bete_engine_page2.py", "3": "Straturile 0 + 1 + 2 + Geometry Layer 3A v5.1", "4": "Motor Gemini — bete_engine_page3.py + geometry_layer2_gemini.py + geometry_layer3a_gemini.py"}})
             return
         if parsed.path.startswith("/api/files/"):
             self._serve_file(parsed.path)
@@ -143,7 +145,7 @@ class BeteHandler(BaseHTTPRequestHandler):
             return
 
         page = query.get("page", ["1"])[0]
-        if page not in {"1", "2", "3"}:
+        if page not in {"1", "2", "3", "4"}:
             self._send_json(400, {"error": "Pagina trebuie să fie 1, 2 sau 3."})
             return
 
@@ -253,6 +255,85 @@ class BeteHandler(BaseHTTPRequestHandler):
                 result["layer2_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer2.json"
                 result["layer3a_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer3a.json"
                 json_name = "input_geometry_layer3a.json"
+            else:
+                # Motor Gemini: Stratul 0 + 1 existent, cu implementările noi pentru 2 și 3.
+                result = process_image_page3(input_path, run_dir, scale=1.0)
+                debug_names = [
+                    "debug_1_dss_exact.png",
+                    "debug_2_tipuri.png",
+                    "debug_3_alungire.png",
+                    "debug_4_verificare_100pct.png",
+                ]
+                json_name = "input_geometry_layer3a.json"
+                engine_name = (
+                    "Motor Gemini · bete_engine_page3.py + "
+                    "geometry_layer2_gemini.py + geometry_layer3a_gemini.py"
+                )
+                full_result_path = Path(result["json_file"]).resolve()
+                if full_result_path.parent != run_dir.resolve() or full_result_path.name != "input_geometry_layer1.json":
+                    raise RuntimeError("Motor Gemini: Stratul 1 a produs un JSON în afara execuției curente.")
+                full_result = json.loads(full_result_path.read_text(encoding="utf-8"))
+                result["primitives"] = full_result.get("primitives", [])
+                result["junctions"] = full_result.get("junctions", [])
+
+                proof = full_result.get("lossless_verification", {})
+                if int(proof.get("layer0_dss_xor_error_pixels", -1)) != 0:
+                    raise RuntimeError("Motor Gemini blocat: verificarea XOR a Stratului 0 nu este zero.")
+                if int(proof.get("layer1_uncovered_ink_pixels", -1)) != 0 or proof.get("guaranteed_100pct_coverage") is not True:
+                    raise RuntimeError("Motor Gemini blocat: Stratul 1 nu a confirmat acoperirea 100%.")
+
+                layer2_result = process_layer1_json_gemini(
+                    full_result_path, run_dir, image_override=str(input_path)
+                )
+                audit = layer2_result.get("accounting_verification", {})
+                if (audit.get("guaranteed_100pct_accounting") is not True
+                        or int(audit.get("unaccounted_primitives", -1)) != 0
+                        or int(audit.get("duplicate_primitives", -1)) != 0):
+                    raise RuntimeError("Motor Gemini: Stratul 2 nu a confirmat contabilitatea completă.")
+                result["layer2"] = {
+                    key: value for key, value in layer2_result.items()
+                    if key not in {"debug_images", "json_file"}
+                }
+                result["layer2_debug_images"] = {
+                    Path(name).stem: "/api/files/" + run_id + "/" + Path(name).name
+                    for name in layer2_result["debug_images"].values()
+                }
+                layer2_json_path = Path(layer2_result.get("json_file", "")).resolve()
+                if layer2_json_path.parent != run_dir.resolve() or layer2_json_path.name != "input_geometry_layer2.json":
+                    raise RuntimeError("Motor Gemini: Stratul 2 a produs un JSON în afara execuției curente.")
+
+                layer3a_result = process_layer3a_gemini(
+                    full_result_path, layer2_json_path, run_dir, image_override=str(input_path)
+                )
+                layer3a_json_path = Path(layer3a_result.get("json_file", "")).resolve()
+                if layer3a_json_path.parent != run_dir.resolve() or layer3a_json_path.name != "input_geometry_layer3a.json":
+                    raise RuntimeError("Motor Gemini: Stratul 3 a produs un JSON în afara execuției curente.")
+                audit3a = layer3a_result.get("audit_verification", {})
+                if (audit3a.get("guaranteed_exact_once_accounting") is not True
+                        or int(audit3a.get("missing_primitives", -1)) != 0
+                        or int(audit3a.get("duplicate_primitive_assignments", -1)) != 0
+                        or int(audit3a.get("missing_molecules", -1)) != 0
+                        or int(audit3a.get("duplicate_molecule_assignments", -1)) != 0):
+                    raise RuntimeError("Motor Gemini: Stratul 3 nu a confirmat auditul strict count == 1.")
+
+                result["layer3a"] = {
+                    "schema_version": layer3a_result.get("schema_version"),
+                    "upstream_gates": layer3a_result.get("upstream_gates", {}),
+                    "audit_verification": audit3a,
+                    "totals": layer3a_result.get("totals", {}),
+                    "grids": [{
+                        "grid_id": grid.get("grid_id"),
+                        "metrics": grid.get("metrics", {}),
+                        "counts": grid.get("counts", {}),
+                    } for grid in layer3a_result.get("grids", [])],
+                }
+                result["layer3a_debug_images"] = {
+                    Path(name).stem: "/api/files/" + run_id + "/" + Path(name).name
+                    for name in layer3a_result.get("debug_images", {}).values()
+                }
+                result["layer1_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer1.json"
+                result["layer2_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer2.json"
+                result["layer3a_json_download_url"] = "/api/files/" + run_id + "/input_geometry_layer3a.json"
         except Exception as exc:
             self._send_json(422, {"error": "Analiza a eșuat: " + str(exc)[:500]})
             return
