@@ -394,18 +394,19 @@ function renderLayer3A(layer3a){
 
 function showAnalysis(data,page){
  renderStats(data,page);renderImages(data,page);
- document.getElementById("resultTitle").textContent="Rezultatul Paginii "+page;
+ document.getElementById("resultTitle").textContent=page==="4"?"Rezultatul Motorului Gemini":"Rezultatul Paginii "+page;
  const size=data.image_size_px||data.preprocessing?.working_size_px||{width:"—",height:"—"};
  document.getElementById("runInfo").textContent=size.width+" × "+size.height+" px · "+data.engine+" · Run "+data.run_id.slice(0,8);
  document.getElementById("downloadJson").href=data.json_download_url;
  const layer1Download=document.getElementById("downloadLayer1Json");
  const layer2Download=document.getElementById("downloadLayer2Json");
  const layer3aDownload=document.getElementById("downloadLayer3aJson");
- layer1Download.classList.toggle("hidden",page!=="3");layer2Download.classList.toggle("hidden",page!=="3");layer3aDownload.classList.toggle("hidden",page!=="3");
- document.getElementById("layer2Section").classList.toggle("hidden",page!=="3");document.getElementById("layer3aSection").classList.toggle("hidden",page!=="3");
- if(page==="3"){
+ const isGeometryPipeline=page==="3"||page==="4";
+ layer1Download.classList.toggle("hidden",!isGeometryPipeline);layer2Download.classList.toggle("hidden",!isGeometryPipeline);layer3aDownload.classList.toggle("hidden",!isGeometryPipeline);
+ document.getElementById("layer2Section").classList.toggle("hidden",!isGeometryPipeline);document.getElementById("layer3aSection").classList.toggle("hidden",!isGeometryPipeline);
+ if(isGeometryPipeline){
   layer1Download.href=data.layer1_json_download_url;layer2Download.href=data.layer2_json_download_url;layer3aDownload.href=data.layer3a_json_download_url;
-  document.getElementById("downloadJson").textContent="↓ JSON Stratul 3A";
+  document.getElementById("downloadJson").textContent=page==="4"?"↓ JSON Motor Gemini · Stratul 3":"↓ JSON Stratul 3A";
  }else{
   document.getElementById("downloadJson").textContent="↓ Descarcă JSON analiză";
  }
@@ -424,7 +425,7 @@ function showAnalysis(data,page){
  }else{
   document.getElementById("tableTitle").textContent="Partiția în primitive geometrice";
   document.getElementById("tableDescription").textContent="Fiecare rând descrie o bandă dreaptă, o bandă curbă sau o pată compactă; vecinii indică relațiile dintre primitive.";
-  document.getElementById("debugDescription").textContent="Patru imagini pentru Straturile 0 + 1, trei pentru Stratul 2 și trei diagnostice geometrice pentru Stratul 3A v5.1.";
+  document.getElementById("debugDescription").textContent=page==="4"?"Patru imagini pentru Straturile 0 + 1, trei pentru Stratul 2 și trei diagnostice pentru Stratul 3 v5.3.1.":"Patru imagini pentru Straturile 0 + 1, trei pentru Stratul 2 și trei diagnostice geometrice pentru Stratul 3A v5.1.";
   renderPage3Table(data.primitives);
   showPage3Proof(data);
   renderLayer2Tables(data.layer2||{});
@@ -438,7 +439,7 @@ function showAnalysis(data,page){
   );
   document.getElementById("layer2Section").classList.remove("hidden");
   renderLayer3A(data.layer3a||{});document.getElementById("layer3aSection").classList.remove("hidden");
-  document.getElementById("limitations").textContent="Stratul 3A v5.1 a primit exclusiv JSON-urile validate ale Straturilor 1 și 2. Verifică metricile locale, continuitatea celulelor, contactele și proximitățile geometrice și contabilizarea strictă count == 1 pentru primitive și molecule. Aceste garanții privesc modelul geometric calculat, nu perfecțiunea binarizării sau interpretarea semantică.";
+  document.getElementById("limitations").textContent=page==="4"?"Motor Gemini folosește implementările furnizate pentru Stratul 2 și Stratul 3 (v5.3.1), împreună cu Stratul 0 + 1 din bete_engine_page3.py. Nu apelează un serviciu cloud Gemini.":"Stratul 3A v5.1 a primit exclusiv JSON-urile validate ale Straturilor 1 și 2. Verifică metricile locale, continuitatea celulelor, contactele și proximitățile geometrice și contabilizarea strictă count == 1 pentru primitive și molecule. Aceste garanții privesc modelul geometric calculat, nu perfecțiunea binarizării sau interpretarea semantică.";
  }
  resultsSection.classList.remove("hidden");
  resultsSection.scrollIntoView({behavior:"smooth",block:"start"});
