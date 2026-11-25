@@ -1915,6 +1915,9 @@ def _describe_grid_primitives_and_graphs(
             du_s = (uc_b - uc_a) / max(1e-6, S)
             dv_s = (vc_b - vc_a) / max(1e-6, S)
             quadrant = ("right" if du_s >= 0 else "left") if abs(du_s) >= abs(dv_s) else ("below" if dv_s >= 0 else "above")
+            exact_gap_px, _ = _convex_polygons_exact_distance(
+                _prim_polygon_xy(pa), _prim_polygon_xy(pb)
+            )
             spatial_proximities.append({
                 "prim_a": pid_a,
                 "prim_b": pid_b,
@@ -1925,6 +1928,9 @@ def _describe_grid_primitives_and_graphs(
                 "du_a_to_b_in_S": round(du_s, 3),
                 "dv_a_to_b_in_S": round(dv_s, 3),
                 "dslot_a_to_b": round(slot_b - slot_a, 3),
+                "distance_precision": _pair_distance_precision(pa, pb),
+                "exact_gap_px": round(exact_gap_px, 3),
+                "exact_gap_in_S": round(exact_gap_px / max(1e-6, S), 3),
                 "box_gap_u_in_S": round(gu / max(1e-6, S), 3),
                 "box_gap_v_in_S": round(gv / max(1e-6, S), 3),
                 "box_gap_in_S": round(box_gap / max(1e-6, S), 3),
