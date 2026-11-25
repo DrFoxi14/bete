@@ -109,6 +109,7 @@
         <a class="secondary hidden" id="downloadLayer1Json" href="#" download>↓ JSON Stratul 1</a>
         <a class="secondary hidden" id="downloadLayer2Json" href="#" download>↓ JSON Stratul 2</a>
         <a class="secondary hidden" id="downloadLayer3aJson" href="#" download>↓ JSON Stratul 3A</a>
+        <a class="secondary hidden" id="downloadLayer3bJson" href="#" download>↓ JSON Stratul 3B.1 · Muzică</a>
       </div>
     </div>
     <div class="stats" id="stats"></div>
@@ -143,6 +144,29 @@
       <div class="table-wrap">
         <table><thead id="layer3aGridHead"></thead><tbody id="layer3aGridBody"><tr><td class="empty">Nu există grile.</td></tr></tbody></table>
       </div>
+    </div>
+    <div class="section hidden" id="layer3bSection">
+      <div class="section-heading">
+        <div><h2>Stratul 3B.1 — Semantică Muzicală Stem-First</h2><p>Interpretează grilele validate în tije, capete de note, bare, flags, puncte și evenimente muzicale.</p></div>
+      </div>
+      <div class="stats" id="layer3bStats"></div>
+      <div class="section">
+        <div class="section-heading"><div><h2>Diagnostic semantic</h2><p>Tije, note, beams și puncte suprapuse peste geometria originală.</p></div></div>
+        <article class="image-card wide">
+          <div class="image-label"><strong>Stratul 3B.1 · Note, tije și beams</strong><small>debug_l3b_1_notes_stems_beams</small></div>
+          <img id="layer3bDebugImage" alt="Diagnostic semantic muzical Layer 3B.1" class="hidden">
+          <div id="layer3bDebugEmpty" class="empty">Imaginea de diagnostic nu este disponibilă.</div>
+        </article>
+      </div>
+      <div class="section">
+        <div class="section-heading"><div><h2>Evenimente muzicale</h2><p>Note și acorduri detectate, cu voce, durată, subdiviziune și poziții pe portativ.</p></div></div>
+        <div class="table-wrap"><table><thead id="layer3bEventHead"></thead><tbody id="layer3bEventBody"><tr><td class="empty">Nu există evenimente.</td></tr></tbody></table></div>
+      </div>
+      <div class="section">
+        <div class="section-heading"><div><h2>Tije detectate</h2><p>Asocieri între tije și capete de note.</p></div></div>
+        <div class="table-wrap"><table><thead id="layer3bStemHead"></thead><tbody id="layer3bStemBody"><tr><td class="empty">Nu există tije.</td></tr></tbody></table></div>
+      </div>
+      <div class="footnote" id="layer3bNotes"></div>
     </div>
   </section>
 </main>
@@ -392,6 +416,47 @@ function renderLayer3A(layer3a){
  for(const grid of grids){const m=grid.metrics||{},c=grid.counts||{},row=document.createElement("tr");const span=Array.isArray(m.u_span)?m.u_span.map(v=>fmt(v,1)).join(" → "):"—";const values=[grid.grid_id,m.line_count,fmt(m.spacing_px,2),span,m.geometry_health,m.domain_order_valid===true?"da":m.domain_order_valid===false?"nu":"—",c.cells,c.direct_contacts,c.spatial_proximities];values.forEach(value=>{const td=document.createElement("td");td.textContent=String(value??"—");row.append(td);});body.append(row);}
 }
 
+
+function renderLayer3B(layer3b,debugImages){
+ const totals=layer3b.totals||{},grids=layer3b.grids||[];
+ const stats=document.getElementById("layer3bStats");stats.replaceChildren();
+ stats.append(
+  makeStat(totals.grids??grids.length,"Grile analizate",""),
+  makeStat(totals.events??0,"Note / acorduri","green"),
+  makeStat(totals.stems??0,"Tije stem",""),
+  makeStat(totals.beams??0,"Beams","")
+ );
+ const img=document.getElementById("layer3bDebugImage"),empty=document.getElementById("layer3bDebugEmpty");
+ const imgUrl=(debugImages||{}).debug_l3b_1_notes_stems_beams;
+ img.classList.toggle("hidden",!imgUrl);empty.classList.toggle("hidden",Boolean(imgUrl));
+ if(imgUrl)img.src=imgUrl;
+
+ const events=grids.flatMap(g=>(g.events||[]).map(e=>({...e,_grid_id:g.grid_id})));
+ const eventHead=document.getElementById("layer3bEventHead"),eventBody=document.getElementById("layer3bEventBody");
+ eventHead.replaceChildren();eventBody.replaceChildren();
+ const eventHeaders=["Eveniment","Grilă","Celulă","Tip","Voce","Direcție tijă","Durată","Pătrimi","Beams","Flags","Puncte","Trepte","Capete de note"];
+ const eh=document.createElement("tr");eventHeaders.forEach(x=>{const th=document.createElement("th");th.textContent=x;eh.append(th);});eventHead.append(eh);
+ if(!events.length){const tr=document.createElement("tr"),td=document.createElement("td");td.className="empty";td.colSpan=eventHeaders.length;td.textContent="Nu au fost deduse evenimente muzicale din grilele analizate.";tr.append(td);eventBody.append(tr);}
+ for(const ev of events){
+  const tr=document.createElement("tr");
+  const vals=["#"+ev.event_id,ev._grid_id,ev.cell_id,ev.event_kind,ev.voice,ev.stem_direction,ev.duration_name,fmt(ev.duration_quarters,3),ev.beam_count,ev.flag_count,ev.dots,(ev.slots_int||[]).join(", "),(ev.noteheads||[]).map(n=>"#"+n.primitive_id+" "+n.fill).join(", ")];
+  vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v??"—");tr.append(td);});eventBody.append(tr);
+ }
+
+ const stems=grids.flatMap(g=>(g.stems||[]).map(st=>({...st,_grid_id:g.grid_id})));
+ const stemHead=document.getElementById("layer3bStemHead"),stemBody=document.getElementById("layer3bStemBody");
+ stemHead.replaceChildren();stemBody.replaceChildren();
+ const stemHeaders=["Tijă","Grilă","Celulă","Direcție","Înălțime (S)","Primitive","Capete note","Beams","Flags"];
+ const sh=document.createElement("tr");stemHeaders.forEach(x=>{const th=document.createElement("th");th.textContent=x;sh.append(th);});stemHead.append(sh);
+ if(!stems.length){const tr=document.createElement("tr"),td=document.createElement("td");td.className="empty";td.colSpan=stemHeaders.length;td.textContent="Nu au fost asociate tije muzicale.";tr.append(td);stemBody.append(tr);}
+ for(const st of stems){
+  const tr=document.createElement("tr");
+  const vals=["#"+st.stem_id,st._grid_id,st.cell_id,st.direction,fmt(st.height_in_S,3),(st.primitive_ids||[]).join(", "),(st.notehead_pids||[]).map(x=>"#"+x).join(", "),(st.beam_ids||[]).map(x=>"#"+x).join(", "),(st.flag_pids||[]).map(x=>"#"+x).join(", ")];
+  vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v??"—");tr.append(td);});stemBody.append(tr);
+ }
+ document.getElementById("layer3bNotes").textContent="Schema: "+(layer3b.schema_version||"—")+" · Schema geometric din amonte: "+(layer3b.upstream_schema_version||"—")+" · Primitive de grilă neclasificate semantic: "+fmt(totals.unclassified_grid_primitives,0)+". Duratele sunt interpretări structurale deduse din geometrie, nu transcriere muzicală certificată.";
+}
+
 function showAnalysis(data,page){
  renderStats(data,page);renderImages(data,page);
  document.getElementById("resultTitle").textContent=page==="4"?"Rezultatul Motorului Gemini":"Rezultatul Paginii "+page;
@@ -401,12 +466,14 @@ function showAnalysis(data,page){
  const layer1Download=document.getElementById("downloadLayer1Json");
  const layer2Download=document.getElementById("downloadLayer2Json");
  const layer3aDownload=document.getElementById("downloadLayer3aJson");
+ const layer3bDownload=document.getElementById("downloadLayer3bJson");
  const isGeometryPipeline=page==="3"||page==="4";
- layer1Download.classList.toggle("hidden",!isGeometryPipeline);layer2Download.classList.toggle("hidden",!isGeometryPipeline);layer3aDownload.classList.toggle("hidden",!isGeometryPipeline);
- document.getElementById("layer2Section").classList.toggle("hidden",!isGeometryPipeline);document.getElementById("layer3aSection").classList.toggle("hidden",!isGeometryPipeline);
+ layer1Download.classList.toggle("hidden",!isGeometryPipeline);layer2Download.classList.toggle("hidden",!isGeometryPipeline);layer3aDownload.classList.toggle("hidden",!isGeometryPipeline);layer3bDownload.classList.toggle("hidden",page!=="4");
+ document.getElementById("layer2Section").classList.toggle("hidden",!isGeometryPipeline);document.getElementById("layer3aSection").classList.toggle("hidden",!isGeometryPipeline);document.getElementById("layer3bSection").classList.toggle("hidden",page!=="4");
  if(isGeometryPipeline){
   layer1Download.href=data.layer1_json_download_url;layer2Download.href=data.layer2_json_download_url;layer3aDownload.href=data.layer3a_json_download_url;
-  document.getElementById("downloadJson").textContent=page==="4"?"↓ JSON Motor Gemini · Stratul 3":"↓ JSON Stratul 3A";
+  if(page==="4"){layer3bDownload.href=data.layer3b_json_download_url;}
+  document.getElementById("downloadJson").textContent=page==="4"?"↓ JSON Motor Gemini · Stratul 3B.1":"↓ JSON Stratul 3A";
  }else{
   document.getElementById("downloadJson").textContent="↓ Descarcă JSON analiză";
  }
@@ -439,7 +506,8 @@ function showAnalysis(data,page){
   );
   document.getElementById("layer2Section").classList.remove("hidden");
   renderLayer3A(data.layer3a||{});document.getElementById("layer3aSection").classList.remove("hidden");
-  document.getElementById("limitations").textContent=page==="4"?"Motor Gemini folosește implementările furnizate pentru Stratul 2 și Stratul 3 (v5.3.1), împreună cu Stratul 0 + 1 din bete_engine_page3.py. Nu apelează un serviciu cloud Gemini.":"Stratul 3A v5.1 a primit exclusiv JSON-urile validate ale Straturilor 1 și 2. Verifică metricile locale, continuitatea celulelor, contactele și proximitățile geometrice și contabilizarea strictă count == 1 pentru primitive și molecule. Aceste garanții privesc modelul geometric calculat, nu perfecțiunea binarizării sau interpretarea semantică.";
+  if(page==="4"){renderLayer3B(data.layer3b||{},data.layer3b_debug_images||{});document.getElementById("layer3bSection").classList.remove("hidden");}
+  document.getElementById("limitations").textContent=page==="4"?"Motor Gemini rulează Stratul 0 + 1, Stratul 2, Stratul 3 v5.3.1 și Stratul 3B.1 — semantică muzicală Stem-First. Nu apelează un serviciu cloud Gemini. Interpretarea muzicală este structurală și trebuie verificată față de partitură.":"Stratul 3A v5.1 a primit exclusiv JSON-urile validate ale Straturilor 1 și 2. Verifică metricile locale, continuitatea celulelor, contactele și proximitățile geometrice și contabilizarea strictă count == 1 pentru primitive și molecule. Aceste garanții privesc modelul geometric calculat, nu perfecțiunea binarizării sau interpretarea semantică.";
  }
  resultsSection.classList.remove("hidden");
  resultsSection.scrollIntoView({behavior:"smooth",block:"start"});
