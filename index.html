@@ -160,7 +160,8 @@ let selectedFile=null,previewUrl=null,selectedPage="1";
 const pageDescriptions={
  "1":"<strong>Pagina 1:</strong> extracție nedistructivă. Păstrează fiecare braț liniar; nu aplică reguli F/T/X/L și nu elimină bețe după lungime sau grosime. De exemplu, F = trei bețe, f = bățul mare plus bara mică, iar π = trei brațe.",
  "2":"<strong>Pagina 2:</strong> folosește <code>bete_engine_page2.py</code>, copia exactă a codului v3 atașat. Include extracția în Faza 1 și clasificarea relațională în Faza 2.",
- "3":"<strong>Pagina 3:</strong> patru etape secvențiale. Stratul 0 reconstruiește masca prin DSS; Stratul 1 o partiționează în primitive; Stratul 2 analizează topologia; Geometry Layer 3A v5.1 construiește metrica locală a grilelor, grafurile de contacte și proximități și execută auditul strict count == 1.",
+ "3":"<strong>Pagina 3:</strong> Stratul 0 + 1 + 2 + Geometry Layer 3A v5.1.",
+ "4":"<strong>Motor Gemini:</strong> Stratul 0 + 1 din bete_engine_page3.py, apoi codul furnizat pentru Stratul 2 și Stratul 3 (geometry_layer2_gemini.py + geometry_layer3a_gemini.py). Pipeline separat, rulat local.",
 };
 function setStatus(message,kind){
  statusBox.textContent=message;statusBox.className="status "+(kind||"");
@@ -169,10 +170,10 @@ function choosePage(page){
  selectedPage=page;
  document.querySelectorAll(".tab").forEach(button=>button.classList.toggle("active",button.dataset.page===page));
  document.getElementById("pageExplainer").innerHTML=pageDescriptions[page];
- document.getElementById("scaleField").classList.toggle("hidden",page==="3");
- document.getElementById("page3ScaleHint").classList.toggle("hidden",page!=="3");
+ document.getElementById("scaleField").classList.toggle("hidden",page==="3"||page==="4");
+ document.getElementById("page3ScaleHint").classList.toggle("hidden",page!=="3"&&page!=="4");
  document.getElementById("page3Proof").classList.add("hidden");
- analyzeButton.textContent="Rulează Pagina "+page;
+ analyzeButton.textContent=page==="4"?"Rulează Motorul Gemini":"Rulează Pagina "+page;
  resultsSection.classList.add("hidden");
 }
 document.querySelectorAll(".tab").forEach(button=>button.addEventListener("click",()=>choosePage(button.dataset.page)));
